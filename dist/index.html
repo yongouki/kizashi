@@ -1132,7 +1132,7 @@ class App extends React.Component {
   composeShareText(present) {
     const h = this.hexContent(present.num);
     const q = (this.state.question && this.state.question.trim()) ? '問い：' + this.state.question.trim() + '\n' : '';
-    return q + '今回の卦は『' + present.name + '』（第' + present.num + '卦）。' + (h.summary || '') + '\n— 兆 kizashi';
+    return q + '今回の卦は『' + present.name + '』（第' + present.num + '卦）。' + (h.summary || '') + '\n\n#易経 #兆kizashi';
   }
 
   // build the PNG File synchronously (no await) so navigator.share keeps the tap's
