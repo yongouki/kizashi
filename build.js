@@ -17,7 +17,6 @@ function inline(srcAttr, file) {
 
 inline('./vendor/react.production.min.js', 'vendor/react.production.min.js');
 inline('./vendor/react-dom.production.min.js', 'vendor/react-dom.production.min.js');
-inline('./vendor/html-to-image.min.js', 'vendor/html-to-image.min.js');
 inline('./hexdata.js', 'hexdata.js');
 
 fs.mkdirSync(path.join(ROOT, 'dist'), { recursive: true });

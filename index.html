@@ -60,7 +60,6 @@
 
 <script src="./vendor/react.production.min.js"></script>
 <script src="./vendor/react-dom.production.min.js"></script>
-<script src="./vendor/html-to-image.min.js"></script>
 <script src="./hexdata.js"></script>
 
 <script>
@@ -409,7 +408,6 @@ class App extends React.Component {
   };
 
   // ---- share / image ----
-  shareCardRef = (n) => { this._shareCard = n; };
   _clearToast() { if (this._toastT) clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 2200); }
   _present() { return this.hexFromLines(this.state.casts.map((c) => c.value)); }
 
@@ -438,17 +436,17 @@ class App extends React.Component {
   };
 
   saveImage = async () => {
-    const node = this._shareCard;
-    if (!node || typeof htmlToImage === 'undefined') { this.setState({ toast: '画像を作成できません' }); this._clearToast(); return; }
+    if (this.state.casts.length < 6) return;
     try {
       this.setState({ toast: '画像を作成中…' });
       if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
-      const dataUrl = await htmlToImage.toPng(node, { pixelRatio: 2, backgroundColor: '#e6e3dd', cacheBust: true });
       const present = this._present();
+      const canvas = this.drawShareCanvas(present);
       const fname = 'kizashi-' + present.num + '-' + present.name + '.png';
+      const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+      if (!blob) { this.setState({ toast: '画像の作成に失敗しました' }); this._clearToast(); return; }
       let shared = false;
       try {
-        const blob = await (await fetch(dataUrl)).blob();
         const file = new File([blob], fname, { type: 'image/png' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
           await navigator.share({ files: [file], title: '兆 kizashi' });
@@ -456,9 +454,11 @@ class App extends React.Component {
         }
       } catch (_) {}
       if (!shared) {
+        const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
-        a.href = dataUrl; a.download = fname;
+        a.href = url; a.download = fname;
         document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(url); } catch (_) {} }, 2000);
         this.setState({ toast: '画像を保存しました' }); this._clearToast();
       } else {
         this.setState({ toast: '' });
@@ -468,27 +468,94 @@ class App extends React.Component {
     }
   };
 
-  renderShareCard(present) {
-    if (!present) return null;
+  // Render the share image with the Canvas 2D API — reliable everywhere, unlike
+  // html-to-image's foreignObject path which can come out blank on Safari / off-screen nodes.
+  drawShareCanvas(present) {
     const h = this.hexContent(present.num);
+    const accent = CONFIG.ACCENT;
+    const W = 540; // logical width (scaled by DPR below)
+    const MINCHO = "'Shippori Mincho', serif";
+    const GOTHIC = "'Zen Kaku Gothic New', sans-serif";
+    const cardX = 26, cardPad = 34;
+    const contentW = W - 2 * cardX - 2 * cardPad;
+    const cx = W / 2;
     const date = new Date().toISOString().slice(0, 10);
-    const hexEl = this.renderHexagram(present.lines.map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 200 });
-    const q = this.state.question && this.state.question.trim();
-    return e('div', { ref: this.shareCardRef, 'aria-hidden': true, style: { position: 'fixed', left: '-10000px', top: 0, width: '540px', padding: '52px 46px', background: '#e6e3dd', fontFamily: "'Zen Kaku Gothic New', sans-serif", pointerEvents: 'none' } },
-      e('div', { style: { background: '#ffffff', borderRadius: '30px', padding: '52px 44px', textAlign: 'center', boxShadow: '0 20px 50px rgba(50,44,36,0.12)' } },
-        e('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '12px', marginBottom: '34px' } },
-          e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '30px', color: '#2b2823', letterSpacing: '0.08em' } }, '兆'),
-          e('span', { style: { fontSize: '13px', letterSpacing: '0.34em', color: '#b6b0a6', textTransform: 'uppercase' } }, 'kizashi')
-        ),
-        q ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '18px', lineHeight: 1.8, color: '#9a948b', marginBottom: '30px' } }, '「' + q + '」') : null,
-        e('div', { style: { display: 'flex', justifyContent: 'center', margin: '8px 0 30px' } }, hexEl),
-        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '30px', color: '#2b2823', letterSpacing: '0.06em' } }, present.name),
-        h.reading ? e('div', { style: { fontSize: '13px', color: '#b6b0a6', marginTop: '8px', letterSpacing: '0.16em' } }, h.reading) : null,
-        e('div', { style: { fontSize: '14px', color: '#c3bdb2', marginTop: '6px', letterSpacing: '0.1em' } }, '第' + present.num + '卦'),
-        h.judgment ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 1.9, color: '#4a4640', margin: '26px auto 0', maxWidth: '380px' } }, h.judgment) : null,
-        e('div', { style: { fontSize: '12px', color: '#b6b0a6', marginTop: '34px', letterSpacing: '0.12em' } }, date + ' · 兆 kizashi')
-      )
-    );
+    const question = (this.state.question && this.state.question.trim()) ? this.state.question.trim() : '';
+
+    // measuring pass (logical px, char-wrap for Japanese)
+    const meas = document.createElement('canvas').getContext('2d');
+    const wrap = (text, font, maxW) => {
+      meas.font = font;
+      const out = []; let line = '';
+      for (const ch of text) {
+        if (ch === '\n') { out.push(line); line = ''; continue; }
+        const t = line + ch;
+        if (meas.measureText(t).width > maxW && line) { out.push(line); line = ch; }
+        else line = t;
+      }
+      if (line) out.push(line);
+      return out;
+    };
+    const qLines = question ? wrap('「' + question + '」', '15px ' + MINCHO, contentW) : [];
+    const jLines = h.judgment ? wrap(h.judgment, '15px ' + MINCHO, contentW - 20) : [];
+
+    const hexW = 150, f = hexW / 104, barH = 13 * f, gap = 11 * f, yinGap = 18 * f;
+    const hexH = 6 * barH + 5 * gap;
+    const blocks = [{ t: 'mark', h: 34 }, { gap: 30 }];
+    if (qLines.length) { blocks.push({ t: 'q', h: qLines.length * 24, lines: qLines }, { gap: 26 }); }
+    blocks.push({ t: 'hex', h: hexH }, { gap: 28 }, { t: 'name', h: 32 }, { gap: 10 }, { t: 'reading', h: 16 }, { gap: 6 }, { t: 'num', h: 16 });
+    if (jLines.length) { blocks.push({ gap: 28 }, { t: 'judg', h: jLines.length * 26, lines: jLines }); }
+    blocks.push({ gap: 30 }, { t: 'foot', h: 14 });
+    const contentH = blocks.reduce((s, b) => s + (b.h || b.gap || 0), 0);
+    const LH = Math.round(cardX * 2 + cardPad * 2 + contentH);
+
+    const DPR = 2;
+    const canvas = document.createElement('canvas');
+    canvas.width = W * DPR; canvas.height = LH * DPR;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(DPR, DPR);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    const rr = (x, y, w, hh, r) => { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + hh, r); ctx.arcTo(x + w, y + hh, x, y + hh, r); ctx.arcTo(x, y + hh, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); };
+
+    ctx.fillStyle = '#e6e3dd'; ctx.fillRect(0, 0, W, LH);
+    rr(cardX, cardX, W - 2 * cardX, LH - 2 * cardX, 26); ctx.fillStyle = '#ffffff'; ctx.fill();
+
+    let y = cardX + cardPad;
+    for (const b of blocks) {
+      if (b.gap) { y += b.gap; continue; }
+      if (b.t === 'mark') {
+        ctx.font = '500 26px ' + MINCHO; const mw = ctx.measureText('兆').width;
+        ctx.font = '11px ' + GOTHIC; const kw = ctx.measureText('K I Z A S H I').width;
+        const startX = cx - (mw + 12 + kw) / 2;
+        ctx.textAlign = 'left';
+        ctx.fillStyle = '#2b2823'; ctx.font = '500 26px ' + MINCHO; ctx.fillText('兆', startX, y + 25);
+        ctx.fillStyle = '#b6b0a6'; ctx.font = '11px ' + GOTHIC; ctx.fillText('K I Z A S H I', startX + mw + 12, y + 21);
+        ctx.textAlign = 'center';
+      } else if (b.t === 'q') {
+        ctx.fillStyle = '#9a948b'; ctx.font = '15px ' + MINCHO;
+        b.lines.forEach((ln, i) => ctx.fillText(ln, cx, y + 18 + i * 24));
+      } else if (b.t === 'hex') {
+        const rows = present.lines.slice().reverse(); let hy = y; ctx.fillStyle = accent;
+        for (const v of rows) {
+          if (v === 1) { rr(cx - hexW / 2, hy, hexW, barH, barH / 2); ctx.fill(); }
+          else { const sw = (hexW - yinGap) / 2; rr(cx - hexW / 2, hy, sw, barH, barH / 2); ctx.fill(); rr(cx + hexW / 2 - sw, hy, sw, barH, barH / 2); ctx.fill(); }
+          hy += barH + gap;
+        }
+      } else if (b.t === 'name') {
+        ctx.fillStyle = '#2b2823'; ctx.font = '500 30px ' + MINCHO; ctx.fillText(present.name, cx, y + 28);
+      } else if (b.t === 'reading') {
+        if (h.reading) { ctx.fillStyle = '#b6b0a6'; ctx.font = '13px ' + GOTHIC; ctx.fillText(h.reading, cx, y + 13); }
+      } else if (b.t === 'num') {
+        ctx.fillStyle = '#c3bdb2'; ctx.font = '13px ' + GOTHIC; ctx.fillText('第' + present.num + '卦', cx, y + 13);
+      } else if (b.t === 'judg') {
+        ctx.fillStyle = '#4a4640'; ctx.font = '15px ' + MINCHO;
+        b.lines.forEach((ln, i) => ctx.fillText(ln, cx, y + 18 + i * 26));
+      } else if (b.t === 'foot') {
+        ctx.fillStyle = '#b6b0a6'; ctx.font = '12px ' + GOTHIC; ctx.fillText(date + '  ·  兆 kizashi', cx, y + 12);
+      }
+      y += b.h;
+    }
+    return canvas;
   }
 
   // ---- hexagram rendering ----
@@ -893,8 +960,6 @@ class App extends React.Component {
         e('button', { onClick: this.shareReading, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, 'シェア'),
         e('button', { onClick: this.saveImage, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '画像を保存')
       ),
-      // hidden share-card used for PNG export
-      this.renderShareCard(out.present),
       // again
       e('div', { style: { marginTop: '34px', paddingTop: '24px', borderTop: '1px solid #f1efe9', textAlign: 'center' } },
         e('button', { onClick: this.again, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '別の問いを立てる'),
