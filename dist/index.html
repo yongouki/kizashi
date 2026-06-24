@@ -921,14 +921,14 @@ class App extends React.Component {
 
   // ---- I Ching data ----
   TRI = [
-    { bits: [1,1,1], k: '乾', e: '天', gloss: '創造と前進の力', verb: '天のようにはたらきかけ' },
-    { bits: [1,1,0], k: '兌', e: '澤', gloss: 'よろこびと交わり', verb: '澤のようにひらいて受けとり' },
-    { bits: [1,0,1], k: '離', e: '火', gloss: '明るさと知性', verb: '火のように照らして見きわめ' },
-    { bits: [1,0,0], k: '震', e: '雷', gloss: '始まりと、震わす動き', verb: '雷のように踏み出し' },
-    { bits: [0,1,1], k: '巽', e: '風', gloss: '浸透としなやかさ', verb: '風のようにじわり届かせ' },
-    { bits: [0,1,0], k: '坎', e: '水', gloss: '試練と深まり', verb: '水のように低きへ流れ' },
-    { bits: [0,0,1], k: '艮', e: '山', gloss: '静止と、たくわえ', verb: '山のようにいったん止まり' },
-    { bits: [0,0,0], k: '坤', e: '地', gloss: '受容と育み', verb: '地のように受けとめ' },
+    { bits: [1,1,1], k: '乾', reading: 'けん', e: '天', gloss: '創造と前進の力', verb: '天のようにはたらきかけ' },
+    { bits: [1,1,0], k: '兌', reading: 'だ', e: '澤', gloss: 'よろこびと交わり', verb: '澤のようにひらいて受けとり' },
+    { bits: [1,0,1], k: '離', reading: 'り', e: '火', gloss: '明るさと知性', verb: '火のように照らして見きわめ' },
+    { bits: [1,0,0], k: '震', reading: 'しん', e: '雷', gloss: '始まりと、震わす動き', verb: '雷のように踏み出し' },
+    { bits: [0,1,1], k: '巽', reading: 'そん', e: '風', gloss: '浸透としなやかさ', verb: '風のようにじわり届かせ' },
+    { bits: [0,1,0], k: '坎', reading: 'かん', e: '水', gloss: '試練と深まり', verb: '水のように低きへ流れ' },
+    { bits: [0,0,1], k: '艮', reading: 'ごん', e: '山', gloss: '静止と、たくわえ', verb: '山のようにいったん止まり' },
+    { bits: [0,0,0], k: '坤', reading: 'こん', e: '地', gloss: '受容と育み', verb: '地のように受けとめ' },
   ];
   // KW[lowerIdx][upperIdx], trigram order 乾兌離震巽坎艮坤
   KW = [
@@ -1367,7 +1367,9 @@ class App extends React.Component {
     const meaning = h.summary || `下に${lo.e}（${lo.gloss}）、上に${up.e}（${up.gloss}）が重なる形です。`;
     const guide = h.advice || `${lo.verb}、その上で${up.verb}——そんな構えが、この問いには合っているのかもしれません。`;
     if (role === 'present') {
-      const para1 = `いま現れているのは『${hex.name}』${judg}。${meaning}`;
+      const para1 = judg
+        ? `いま現れているのは『${hex.name}』${judg}${meaning}`
+        : `いま現れているのは『${hex.name}』。${meaning}`;
       const para2 = guide;
       let transitionText, closing;
       if (cc > 0) {
@@ -1744,8 +1746,8 @@ class App extends React.Component {
     const chip = (t) => e('span', { key: t, style: { fontSize: '11.5px', color: '#5a6184', background: '#eef0f6', borderRadius: '999px', padding: '5px 12px', letterSpacing: '0.06em' } }, t);
     const tri = (label, t) => e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px' } },
       e('span', { style: { fontSize: '10.5px', color: '#aaa49a', letterSpacing: '0.14em', width: '38px', flex: 'none' } }, label),
-      e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823' } }, t.k + '（' + t.e + '）'),
-      e('span', { style: { fontSize: '12px', color: '#9a948b' } }, t.gloss)
+      e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', flex: 'none' } }, t.k + '（' + t.reading + '）'),
+      e('span', { style: { fontSize: '12px', color: '#9a948b' } }, t.e + ' ・ ' + t.gloss)
     );
     return e('div', { key: 'detail-' + n, style: { padding: '24px 28px 48px', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '8px', textAlign: 'center' } }, '第' + n + '卦'),
