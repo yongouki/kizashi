@@ -1491,7 +1491,8 @@ class App extends React.Component {
 
   // Annotate classical text: glossary terms get furigana (ruby) + are tappable for a definition.
   annotateClassical(text) {
-    if (!text || typeof GLOSSARY === 'undefined') return text;
+    if (!text) return [];
+    if (typeof GLOSSARY === 'undefined') return [text];
     const accent = CONFIG.ACCENT;
     const nodes = []; let buf = ''; let i = 0; let k = 0;
     const flush = () => { if (buf) { nodes.push(buf); buf = ''; } };
@@ -1792,22 +1793,29 @@ class App extends React.Component {
     );
   }
 
+  // ---- shared bottom-sheet shell (backdrop + sheet + handle + 閉じる) ----
+  renderSheet(onClose, zIndex, content) {
+    return e('div', { onClick: onClose, style: { position: 'absolute', inset: 0, zIndex: zIndex, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
+      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 20px calc(22px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
+        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 18px' } }),
+        content,
+        e('button', { onClick: onClose, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '14px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
+      )
+    );
+  }
+
   // ---- menu sheet ----
   renderMenu(out) {
     const item = (label, sub, onClick) => e('button', { key: label, onClick, style: { display: 'block', width: '100%', textAlign: 'left', border: 'none', background: '#ffffff', borderRadius: '14px', padding: '15px 18px', marginBottom: '10px', cursor: 'pointer' } },
       e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', color: '#2b2823', letterSpacing: '0.06em' } }, label),
       sub ? e('div', { style: { fontSize: '11.5px', color: '#aaa49a', marginTop: '4px', letterSpacing: '0.04em' } }, sub) : null
     );
-    return e('div', { onClick: this.closeMenu, style: { position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
-      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 18px calc(20px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
-        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 18px' } }),
-        item('占う', 'あたらしい問いを立てる', this.again),
-        item('占い履歴', 'これまでの見立てをふり返る', () => this.go('history')),
-        item('64卦をみる', '六十四卦の辞典', () => this.go('reference')),
-        item('はじめに・免責', 'このサイトについて', () => this.go('about')),
-        e('button', { onClick: this.closeMenu, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '14px 0 4px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
-      )
-    );
+    return this.renderSheet(this.closeMenu, 50, e(React.Fragment, null,
+      item('占う', 'あたらしい問いを立てる', this.again),
+      item('占い履歴', 'これまでの見立てをふり返る', () => this.go('history')),
+      item('64卦をみる', '六十四卦の辞典', () => this.go('reference')),
+      item('はじめに・免責', 'このサイトについて', () => this.go('about'))
+    ));
   }
 
   // ---- glossary definition sheet (tap a classical term) ----
@@ -1816,15 +1824,11 @@ class App extends React.Component {
     const g = (typeof GLOSSARY !== 'undefined') ? GLOSSARY[term] : null;
     if (!g) return null;
     const close = () => this.setState({ glossTerm: null });
-    return e('div', { onClick: close, style: { position: 'absolute', inset: 0, zIndex: 55, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
-      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 24px calc(24px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
-        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 20px' } }),
-        e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#9aa0b8', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
-        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '26px', color: '#2b2823', textAlign: 'center', letterSpacing: '0.06em', marginBottom: '16px' } }, term),
-        e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 6px', textAlign: 'center', textWrap: 'pretty' } }, g.mean),
-        e('button', { onClick: close, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '16px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
-      )
-    );
+    return this.renderSheet(close, 55, e(React.Fragment, null,
+      e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#9aa0b8', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
+      e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '26px', color: '#2b2823', textAlign: 'center', letterSpacing: '0.06em', marginBottom: '16px' } }, term),
+      e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 4px', textAlign: 'center', textWrap: 'pretty' } }, g.mean)
+    ));
   }
 
   // ---- about / disclaimer ----
@@ -1954,7 +1958,7 @@ class App extends React.Component {
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0', borderTop: '1px solid #f1efe9', borderBottom: '1px solid #f1efe9', marginBottom: '22px' } },
         tri('上卦', hx.upper),
         tri('下卦', hx.lower),
-        h.image ? e('div', { style: { fontSize: '12.5px', color: '#9a948b', marginTop: '4px', letterSpacing: '0.04em' } }, '象 — ' + h.image) : null
+        h.image ? e('div', { style: { fontSize: '12.5px', lineHeight: 2.0, color: '#9a948b', marginTop: '4px', letterSpacing: '0.04em' } }, '象 — ', this.annotateClassical(h.image)) : null
       ),
       h.advice ? e(React.Fragment, null,
         e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 12px', letterSpacing: '0.03em' } }, '読み方・心がけ'),
