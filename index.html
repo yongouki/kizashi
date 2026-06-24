@@ -481,7 +481,8 @@ class App extends React.Component {
         q ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '18px', lineHeight: 1.8, color: '#9a948b', marginBottom: '30px' } }, '「' + q + '」') : null,
         e('div', { style: { display: 'flex', justifyContent: 'center', margin: '8px 0 30px' } }, hexEl),
         e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '30px', color: '#2b2823', letterSpacing: '0.06em' } }, present.name),
-        e('div', { style: { fontSize: '14px', color: '#c3bdb2', marginTop: '8px', letterSpacing: '0.1em' } }, '第' + present.num + '卦'),
+        h.reading ? e('div', { style: { fontSize: '13px', color: '#b6b0a6', marginTop: '8px', letterSpacing: '0.16em' } }, h.reading) : null,
+        e('div', { style: { fontSize: '14px', color: '#c3bdb2', marginTop: '6px', letterSpacing: '0.1em' } }, '第' + present.num + '卦'),
         h.judgment ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 1.9, color: '#4a4640', margin: '26px auto 0', maxWidth: '380px' } }, h.judgment) : null,
         e('div', { style: { fontSize: '12px', color: '#b6b0a6', marginTop: '34px', letterSpacing: '0.12em' } }, date + ' · 兆 kizashi')
       )
@@ -584,7 +585,8 @@ class App extends React.Component {
         e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: focused ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, c.label),
         e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
         e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '20px', color: focused ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em' } }, c.hex.name),
-        e('div', { style: { fontSize: '11px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
+        e('div', { style: { fontSize: '10.5px', color: focused ? '#b6b0a6' : '#cfcabf', marginTop: '5px', letterSpacing: '0.12em' } }, this.hexContent(c.hex.num).reading || ''),
+        e('div', { style: { fontSize: '11px', color: '#c3bdb2', marginTop: '3px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
       );
     }));
 
@@ -824,8 +826,8 @@ class App extends React.Component {
         e('p', { style: { fontSize: '12.5px', lineHeight: 1.9, color: '#aaa49a', margin: 0 } }, '易経では、同じ問いを何度もは占いません。一度、静かに向き合うための作法です。')
       ),
       e('div', { style: { marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '22px' } },
-        e('button', { onClick: () => this.go('reference'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, '64卦をみる'),
-        e('button', { onClick: () => this.go('about'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, 'はじめに')
+        e('button', { onClick: () => this.go('about'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, 'はじめに'),
+        e('button', { onClick: () => this.go('reference'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, '64卦をみる')
       )
     );
   }
