@@ -1135,22 +1135,52 @@ class App extends React.Component {
     return q + '今回の卦は『' + present.name + '』（第' + present.num + '卦）。' + (h.summary || '') + '\n— 兆 kizashi';
   }
 
+  // build the PNG File synchronously (no await) so navigator.share keeps the tap's
+  // user-activation on iOS Safari — toDataURL + atob are sync, unlike canvas.toBlob.
+  _makeShareFileSync(present) {
+    const canvas = this.drawShareCanvas(present);
+    const dataUrl = canvas.toDataURL('image/png');
+    const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return new File([arr], 'kizashi-' + present.num + '-' + present.name + '.png', { type: 'image/png' });
+  }
+
   shareReading = async () => {
     if (this.state.casts.length < 6) return;
     const present = this._present();
     const text = this.composeShareText(present);
+    const url = location.href;
+    let file = null;
+    try { file = this._makeShareFileSync(present); } catch (_) {}
+
+    // 1) share the image together with the text (Web Share Level 2 — best for X / LINE on mobile)
+    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], text: text + '\n' + url, title: '兆 kizashi' });
+        return;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return; // user dismissed the share sheet
+        // otherwise fall through to the manual fallback
+      }
+    }
+    // 2) fallback (desktop / no file-share): hand over the image + copy the text
     try {
-      if (typeof navigator !== 'undefined' && navigator.share) {
-        await navigator.share({ title: '兆 kizashi', text, url: location.href });
-        return;
+      if (file) {
+        const u = URL.createObjectURL(file);
+        const a = document.createElement('a'); a.href = u; a.download = file.name;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => { try { URL.revokeObjectURL(u); } catch (_) {} }, 2000);
       }
-      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-        await navigator.clipboard.writeText(text + '\n' + location.href);
-        this.setState({ toast: 'コピーしました' }); this._clearToast();
-        return;
+      let copied = false;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        try { await navigator.clipboard.writeText(text + '\n' + url); copied = true; } catch (_) {}
       }
-      this.setState({ toast: '共有に対応していません' }); this._clearToast();
-    } catch (e) { /* ユーザーがキャンセルした等 */ }
+      this.setState({ toast: file ? (copied ? '画像を保存し、本文をコピーしました' : '画像を保存しました') : (copied ? 'コピーしました' : '共有に対応していません') });
+      this._clearToast();
+    } catch (e) {
+      this.setState({ toast: '共有に失敗しました' }); this._clearToast();
+    }
   };
 
   saveImage = async () => {
