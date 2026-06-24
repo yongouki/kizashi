@@ -97,6 +97,7 @@ class App extends React.Component {
     toast: '',
     autoCasting: false,
     lastThrow: null,
+    glossTerm: null,
   };
 
   setRefQuery = (e) => this.setState({ refQuery: e.target.value });
@@ -721,6 +722,32 @@ class App extends React.Component {
 
   hexContent(num) { return (typeof HEX !== 'undefined' && HEX[num]) ? HEX[num] : {}; }
 
+  // Annotate classical text: glossary terms get furigana (ruby) + are tappable for a definition.
+  annotateClassical(text) {
+    if (!text || typeof GLOSSARY === 'undefined') return text;
+    const accent = CONFIG.ACCENT;
+    const nodes = []; let buf = ''; let i = 0; let k = 0;
+    const flush = () => { if (buf) { nodes.push(buf); buf = ''; } };
+    while (i < text.length) {
+      let term = null;
+      for (let j = 0; j < GLOSSARY_KEYS.length; j++) { if (text.startsWith(GLOSSARY_KEYS[j], i)) { term = GLOSSARY_KEYS[j]; break; } }
+      if (term) {
+        flush();
+        const g = GLOSSARY[term];
+        const open = (ev) => { ev.stopPropagation(); this.setState({ glossTerm: term }); };
+        nodes.push(e('ruby', {
+          key: 'g' + (k++), onClick: open, role: 'button', tabIndex: 0,
+          'aria-label': term + '（' + g.yomi + '）の意味',
+          onKeyDown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(ev); } },
+          style: { cursor: 'pointer', borderBottom: '1px dotted ' + this.hexToRgba(accent, 0.55), rubyAlign: 'center' },
+        }, term, e('rt', { style: { fontSize: '0.5em', color: '#9aa0b8', fontWeight: 400, letterSpacing: 0 } }, g.yomi)));
+        i += term.length;
+      } else { buf += text[i]; i++; }
+    }
+    flush();
+    return nodes;
+  }
+
   // The AI reading seam. v1 synthesizes locally from authored HEX content + trigram
   // glosses; to enable a real backend later, replace the body with:
   //   const r = await fetch(CONFIG.AI_ENDPOINT, { method:'POST', body: JSON.stringify(ctx) });
@@ -1016,6 +1043,23 @@ class App extends React.Component {
     );
   }
 
+  // ---- glossary definition sheet (tap a classical term) ----
+  renderGloss() {
+    const term = this.state.glossTerm;
+    const g = (typeof GLOSSARY !== 'undefined') ? GLOSSARY[term] : null;
+    if (!g) return null;
+    const close = () => this.setState({ glossTerm: null });
+    return e('div', { onClick: close, style: { position: 'absolute', inset: 0, zIndex: 55, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
+      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 24px calc(24px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
+        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 20px' } }),
+        e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#9aa0b8', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '26px', color: '#2b2823', textAlign: 'center', letterSpacing: '0.06em', marginBottom: '16px' } }, term),
+        e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 6px', textAlign: 'center', textWrap: 'pretty' } }, g.mean),
+        e('button', { onClick: close, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '16px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
+      )
+    );
+  }
+
   // ---- about / disclaimer ----
   renderAbout(out) {
     const h = (t) => e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '17px', color: '#2b2823', margin: '28px 0 12px', letterSpacing: '0.04em' } }, t);
@@ -1135,8 +1179,9 @@ class App extends React.Component {
       h.reading ? e('div', { style: { fontSize: '12px', color: '#b6b0a6', textAlign: 'center', letterSpacing: '0.14em', marginBottom: '16px' } }, h.reading) : null,
       e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '24px' } }, (h.keywords || []).map(chip)),
       h.judgment ? e('div', { style: { background: '#faf9f6', border: '1px solid #f1efe9', borderRadius: '16px', padding: '16px 18px', marginBottom: '20px' } },
-        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '8px' } }, '卦辞'),
-        e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15.5px', lineHeight: 1.9, color: '#3a352e', margin: 0 } }, h.judgment)
+        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '12px' } }, '卦辞'),
+        e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 2.3, color: '#3a352e', margin: 0 } }, this.annotateClassical(h.judgment)),
+        e('div', { style: { fontSize: '10.5px', color: '#c3bdb2', marginTop: '12px', letterSpacing: '0.06em' } }, '点線の語をタップすると、読みと意味が出ます。')
       ) : null,
       h.summary ? e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 22px', textWrap: 'pretty' } }, h.summary) : null,
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0', borderTop: '1px solid #f1efe9', borderBottom: '1px solid #f1efe9', marginBottom: '22px' } },
@@ -1183,7 +1228,7 @@ class App extends React.Component {
 
     const toast = out.toast ? e('div', { style: { position: 'absolute', left: '50%', bottom: 'calc(28px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 60, background: 'rgba(43,40,35,0.92)', color: '#fff', fontSize: '13px', letterSpacing: '0.08em', padding: '11px 20px', borderRadius: '999px', animation: 'kz-fade .25s ease both', whiteSpace: 'nowrap' } }, out.toast) : null;
 
-    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, toast));
+    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, this.state.glossTerm ? this.renderGloss() : null, toast));
   }
 }
 

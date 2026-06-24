@@ -778,6 +778,53 @@ const LINES_FOR = (() => {
   return out;
 })();
 
+/* ================================================================
+   用語集 — 卦辞によく出る古典語。surface(表記) → { yomi:振り仮名, mean:意味 }
+   卦辞中の語を自動でルビ付き＋タップ定義にするのに使う（長い表記を優先一致）。
+   ================================================================ */
+const GLOSSARY = {
+  '元いに':   { yomi: 'おおいに', mean: '大いに。大きく、盛んに。' },
+  '亨る':     { yomi: 'とおる',   mean: '物事が滞りなく通る。願いが叶う方向へ進む。四徳の一つ。' },
+  '貞しき':   { yomi: 'ただしき', mean: '正しく節操を守ること。' },
+  '貞し':     { yomi: 'ただし',   mean: '正しく節操を守ること。' },
+  '貞':       { yomi: 'てい',     mean: '正しさ・節操を堅く守ること。四徳の一つ。' },
+  '利ろし':   { yomi: 'よろし',   mean: '〜するのがよい。好都合である。' },
+  '咎':       { yomi: 'とが',     mean: '過ち。とがめ。「咎なし」は責められることがない意。' },
+  '吉':       { yomi: 'きち',     mean: 'めでたい。良い結果。' },
+  '凶':       { yomi: 'きょう',   mean: '悪い。よくない結果。' },
+  '悔い':     { yomi: 'くい',     mean: '後悔。「悔い亡ぶ」は後悔が消えること。' },
+  '孚':       { yomi: 'まこと',   mean: '真心・誠。内に偽りのない心。' },
+  '厲うき':   { yomi: 'あやうき', mean: '危ういさま。危険をはらむ。' },
+  '厲うし':   { yomi: 'あやうし', mean: '危ういさま。危険をはらむ。' },
+  '大川':     { yomi: 'たいせん', mean: '大きな川。転じて、大きな困難や事業のたとえ。' },
+  '渉る':     { yomi: 'わたる',   mean: '川を渡る。困難を乗り越える喩え。' },
+  '攸':       { yomi: 'ところ',   mean: '行く先・なすべきこと。「往く攸」。' },
+  '往く':     { yomi: 'ゆく',     mean: '進む。行動を起こす。' },
+  '君子':     { yomi: 'くんし',   mean: '徳のある立派な人。理想の人格。' },
+  '大人':     { yomi: 'たいじん', mean: '高い徳と力をもつ人物。' },
+  '小人':     { yomi: 'しょうじん', mean: '徳の小さい人。私利に動く人。' },
+  '丈人':     { yomi: 'じょうじん', mean: '経験を積んだ、頼れる指導者。' },
+  '牝馬':     { yomi: 'ひんば',   mean: '雌の馬。柔順に従う徳の喩え。' },
+  '牝牛':     { yomi: 'ひんぎゅう', mean: '雌の牛。柔順さの喩え。' },
+  '侯':       { yomi: 'こう',     mean: '諸侯。国を治める指導者。「侯を建つ」。' },
+  '師':       { yomi: 'し',       mean: '軍隊。多くの人を率いること。' },
+  '童蒙':     { yomi: 'どうもう', mean: '無知で、これから学ぶ者。' },
+  '眚':       { yomi: 'わざわい', mean: '過失から生じる災い。' },
+  '終わり':   { yomi: 'おわり',   mean: '物事の結末。' },
+  '惕れて':   { yomi: 'おそれて', mean: 'おそれ慎んで。' },
+  '窒がる':   { yomi: 'ふさがる', mean: 'ふさがって通じない。' },
+  '履む':     { yomi: 'ふむ',     mean: '踏む。実地に行う。' },
+  '咥わず':   { yomi: 'くらわず', mean: '噛みつかない。害を加えない。' },
+  '假る':     { yomi: 'いたる',   mean: '至る。「王、廟に假る」は王が宗廟に至り祭ること。' },
+  '廟':       { yomi: 'びょう',   mean: '祖先の霊をまつる社。' },
+  '顒若':     { yomi: 'ぎょうじゃく', mean: 'おごそかに仰ぎ見るさま。' },
+  '棟':       { yomi: 'むね',     mean: '屋根を支える棟木。' },
+  '撓む':     { yomi: 'たわむ',   mean: 'たわんでしなう。負荷が過大なさま。' },
+  '獄':       { yomi: 'ごく',     mean: '訴え・刑罰。「獄を用う」。' },
+  '汔んど':   { yomi: 'ほとんど', mean: 'もう少しで。すんでのところで。' },
+};
+const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
+
 </script>
 
 <script>
@@ -815,6 +862,7 @@ class App extends React.Component {
     toast: '',
     autoCasting: false,
     lastThrow: null,
+    glossTerm: null,
   };
 
   setRefQuery = (e) => this.setState({ refQuery: e.target.value });
@@ -1439,6 +1487,32 @@ class App extends React.Component {
 
   hexContent(num) { return (typeof HEX !== 'undefined' && HEX[num]) ? HEX[num] : {}; }
 
+  // Annotate classical text: glossary terms get furigana (ruby) + are tappable for a definition.
+  annotateClassical(text) {
+    if (!text || typeof GLOSSARY === 'undefined') return text;
+    const accent = CONFIG.ACCENT;
+    const nodes = []; let buf = ''; let i = 0; let k = 0;
+    const flush = () => { if (buf) { nodes.push(buf); buf = ''; } };
+    while (i < text.length) {
+      let term = null;
+      for (let j = 0; j < GLOSSARY_KEYS.length; j++) { if (text.startsWith(GLOSSARY_KEYS[j], i)) { term = GLOSSARY_KEYS[j]; break; } }
+      if (term) {
+        flush();
+        const g = GLOSSARY[term];
+        const open = (ev) => { ev.stopPropagation(); this.setState({ glossTerm: term }); };
+        nodes.push(e('ruby', {
+          key: 'g' + (k++), onClick: open, role: 'button', tabIndex: 0,
+          'aria-label': term + '（' + g.yomi + '）の意味',
+          onKeyDown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(ev); } },
+          style: { cursor: 'pointer', borderBottom: '1px dotted ' + this.hexToRgba(accent, 0.55), rubyAlign: 'center' },
+        }, term, e('rt', { style: { fontSize: '0.5em', color: '#9aa0b8', fontWeight: 400, letterSpacing: 0 } }, g.yomi)));
+        i += term.length;
+      } else { buf += text[i]; i++; }
+    }
+    flush();
+    return nodes;
+  }
+
   // The AI reading seam. v1 synthesizes locally from authored HEX content + trigram
   // glosses; to enable a real backend later, replace the body with:
   //   const r = await fetch(CONFIG.AI_ENDPOINT, { method:'POST', body: JSON.stringify(ctx) });
@@ -1734,6 +1808,23 @@ class App extends React.Component {
     );
   }
 
+  // ---- glossary definition sheet (tap a classical term) ----
+  renderGloss() {
+    const term = this.state.glossTerm;
+    const g = (typeof GLOSSARY !== 'undefined') ? GLOSSARY[term] : null;
+    if (!g) return null;
+    const close = () => this.setState({ glossTerm: null });
+    return e('div', { onClick: close, style: { position: 'absolute', inset: 0, zIndex: 55, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
+      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 24px calc(24px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
+        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 20px' } }),
+        e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#9aa0b8', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '26px', color: '#2b2823', textAlign: 'center', letterSpacing: '0.06em', marginBottom: '16px' } }, term),
+        e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 6px', textAlign: 'center', textWrap: 'pretty' } }, g.mean),
+        e('button', { onClick: close, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '16px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
+      )
+    );
+  }
+
   // ---- about / disclaimer ----
   renderAbout(out) {
     const h = (t) => e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '17px', color: '#2b2823', margin: '28px 0 12px', letterSpacing: '0.04em' } }, t);
@@ -1853,8 +1944,9 @@ class App extends React.Component {
       h.reading ? e('div', { style: { fontSize: '12px', color: '#b6b0a6', textAlign: 'center', letterSpacing: '0.14em', marginBottom: '16px' } }, h.reading) : null,
       e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '24px' } }, (h.keywords || []).map(chip)),
       h.judgment ? e('div', { style: { background: '#faf9f6', border: '1px solid #f1efe9', borderRadius: '16px', padding: '16px 18px', marginBottom: '20px' } },
-        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '8px' } }, '卦辞'),
-        e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15.5px', lineHeight: 1.9, color: '#3a352e', margin: 0 } }, h.judgment)
+        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '12px' } }, '卦辞'),
+        e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 2.3, color: '#3a352e', margin: 0 } }, this.annotateClassical(h.judgment)),
+        e('div', { style: { fontSize: '10.5px', color: '#c3bdb2', marginTop: '12px', letterSpacing: '0.06em' } }, '点線の語をタップすると、読みと意味が出ます。')
       ) : null,
       h.summary ? e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 22px', textWrap: 'pretty' } }, h.summary) : null,
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0', borderTop: '1px solid #f1efe9', borderBottom: '1px solid #f1efe9', marginBottom: '22px' } },
@@ -1901,7 +1993,7 @@ class App extends React.Component {
 
     const toast = out.toast ? e('div', { style: { position: 'absolute', left: '50%', bottom: 'calc(28px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 60, background: 'rgba(43,40,35,0.92)', color: '#fff', fontSize: '13px', letterSpacing: '0.08em', padding: '11px 20px', borderRadius: '999px', animation: 'kz-fade .25s ease both', whiteSpace: 'nowrap' } }, out.toast) : null;
 
-    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, toast));
+    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, this.state.glossTerm ? this.renderGloss() : null, toast));
   }
 }
 
