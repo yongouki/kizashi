@@ -95,6 +95,7 @@ class App extends React.Component {
     viewing: false,
     toast: '',
     autoCasting: false,
+    lastThrow: null,
   };
 
   setRefQuery = (e) => this.setState({ refQuery: e.target.value });
@@ -107,22 +108,34 @@ class App extends React.Component {
     try { this._ro = new ResizeObserver(measure); this._ro.observe(node); } catch (_) {}
   };
 
-  onDragStart = (e) => { this._sx = e.clientX; this.setState({ dragging: true, dragDX: 0 }); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} };
+  // synchronous drag flags (not state) so the first pointermoves aren't dropped by React batching
+  onDragStart = (e) => {
+    this._dragging = true;
+    this._sx = e.clientX;
+    this._dx = 0;
+    this._moved = false;
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+    this.setState({ dragging: true, dragDX: 0 });
+  };
   onDragMove = (e) => {
-    if (!this.state.dragging) return;
+    if (!this._dragging) return;
     let dx = e.clientX - this._sx;
     const fi = this.state.focusIndex;
     if ((fi === 0 && dx > 0) || (fi === 2 && dx < 0)) dx *= 0.35;
     dx = Math.max(-240, Math.min(240, dx));
+    if (Math.abs(dx) > 5) this._moved = true;
+    this._dx = dx;
     this.setState({ dragDX: dx });
   };
-  onDragEnd = () => {
-    if (!this.state.dragging) return;
-    const dx = this.state.dragDX;
+  onDragEnd = (e) => {
+    if (!this._dragging) return;
+    this._dragging = false;
+    const dx = this._dx || 0;
     let fi = this.state.focusIndex;
-    if (dx < -45 && fi < 2) fi++;
-    else if (dx > 45 && fi > 0) fi--;
+    if (dx < -40 && fi < 2) fi++;
+    else if (dx > 40 && fi > 0) fi--;
     this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
+    try { if (e && e.pointerId != null) e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
   };
   setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min(2, i)) });
   onStageKey = (ev) => {
@@ -220,20 +233,25 @@ class App extends React.Component {
     const style = CONFIG.COIN_STYLE;
     const newRot = this.state.rot.slice();
     const newRotZ = this.state.rotZ.slice();
+    const faces = []; // true = 表(head/陽面), false = 裏(tail)
     let y = 0;
     for (let i = 0; i < 3; i++) {
-      const bit = Math.random() < 0.5 ? 1 : 0;
-      y += bit;
-      const baseSpin = style === 'ripple' ? 180 : 720;
-      newRot[i] += baseSpin + Math.floor(Math.random() * 4) * 180;
+      const head = Math.random() < 0.5;
+      faces.push(head);
+      if (head) y += 1;
+      // spin a few turns, then land rotateX on the matching face: 表→0°, 裏→180° (mod 360)
+      const spins = (style === 'ripple' ? 1 : 2) + Math.floor(Math.random() * 2);
+      const base = newRot[i] + spins * 360;
+      const want = head ? 0 : 180;
+      newRot[i] = base + (((want - (base % 360)) + 360) % 360);
       if (style === 'lift') newRotZ[i] += (Math.random() < 0.5 ? -1 : 1) * (160 + Math.floor(Math.random() * 3) * 360);
     }
     const value = (y % 2 === 1) ? 1 : 0;
     const changing = (y === 0 || y === 3);
-    this.setState({ rot: newRot, rotZ: newRotZ, tossing: true, everTossed: true, tossSeq: this.state.tossSeq + 1 });
+    this.setState({ rot: newRot, rotZ: newRotZ, tossing: true, everTossed: true, tossSeq: this.state.tossSeq + 1, lastThrow: null });
     const dur = style === 'lift' ? 1100 : (style === 'ripple' ? 760 : 900);
     setTimeout(() => {
-      this.setState((s) => ({ casts: s.casts.concat([{ value, changing }]), tossing: false }), () => {
+      this.setState((s) => ({ casts: s.casts.concat([{ value, changing }]), tossing: false, lastThrow: { faces, value, changing, y } }), () => {
         // press-and-hold: while held, keep tossing until 6; else stop
         if (this._held && this.state.casts.length < 6) {
           this._autoT = setTimeout(() => this.pumpToss(), 90);
@@ -500,7 +518,7 @@ class App extends React.Component {
       );
       return e('div', {
         key: i,
-        onClick: focused ? undefined : (() => this.setFocus(i)),
+        onClick: focused ? undefined : (() => { if (this._moved) { this._moved = false; return; } this.setFocus(i); }),
         style: {
           width: C + 'px', flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
           transform: `scale(${focused ? 1 : peekScale})`,
@@ -612,16 +630,38 @@ class App extends React.Component {
     // stones
     const dur = coinStyle === 'lift' ? 1100 : (coinStyle === 'ripple' ? 760 : 900);
     const ease = coinStyle === 'lift' ? 'cubic-bezier(.34,1.42,.5,1)' : (coinStyle === 'ripple' ? 'cubic-bezier(.2,.8,.2,1)' : 'cubic-bezier(.2,.72,.2,1)');
-    const stones = [0, 1, 2].map((i) => ({
+    // two-faced coins: 表(front, ●) and 裏(back, ○) so you can see what came up
+    const faceShadow = 'inset 0 3px 6px rgba(255,255,255,.75), inset 0 -5px 9px rgba(120,108,92,.18), 0 10px 20px rgba(60,50,40,.10)';
+    const coinFace = (front) => e('div', {
       style: {
-        width: '72px', height: '72px', borderRadius: '50%', background: '#ece7df',
-        border: '1px solid rgba(150,140,125,.28)',
-        boxShadow: 'inset 0 3px 6px rgba(255,255,255,.75), inset 0 -5px 9px rgba(120,108,92,.18), 0 10px 20px rgba(60,50,40,.10)',
-        flex: 'none',
+        position: 'absolute', inset: 0, borderRadius: '50%',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+        border: '1px solid rgba(150,140,125,.28)', boxShadow: faceShadow,
+        background: front ? '#efe9e0' : '#e2dbcd',
+        transform: front ? 'none' : 'rotateX(180deg)',
+      }
+    }, front
+      ? e('div', { style: { width: '15px', height: '15px', borderRadius: '50%', background: this.hexToRgba(accent, 0.5) } })
+      : e('div', { style: { width: '15px', height: '15px', borderRadius: '50%', border: `2px solid ${this.hexToRgba(accent, 0.5)}`, boxSizing: 'border-box' } })
+    );
+    const coins = [0, 1, 2].map((i) => e('div', {
+      key: i, className: 'kz-coin',
+      style: {
+        position: 'relative', width: '72px', height: '72px', flex: 'none',
+        transformStyle: 'preserve-3d', WebkitTransformStyle: 'preserve-3d',
         transition: `transform ${dur}ms ${ease} ${i * 70}ms`,
         transform: `rotateX(${s.rot[i]}deg) rotateZ(${s.rotZ[i]}deg)`,
       }
-    }));
+    }, coinFace(true), coinFace(false)));
+    const lt = s.lastThrow;
+    const throwReadout = (s.screen === 'cast' && lt && !s.tossing)
+      ? e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '9px' } },
+          lt.faces.map((f, i) => e('span', { key: i, style: { fontFamily: "'Shippori Mincho', serif", fontSize: '13px', letterSpacing: '0.06em', color: f ? '#2f3a6e' : '#aaa49a' } }, f ? '表' : '裏')),
+          e('span', { style: { color: '#d8d3c8', fontSize: '12px' } }, '→'),
+          e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.04em' } }, (lt.value === 1 ? '陽' : '陰') + (lt.changing ? ' · 動爻' : ''))
+        )
+      : null;
     const ripple = (coinStyle === 'ripple' && s.tossing)
       ? e('div', { key: s.tossSeq, style: { position: 'absolute', left: '50%', top: '50%', width: '160px', height: '160px', borderRadius: '50%', border: `1.5px solid ${this.hexToRgba(accent, 0.6)}`, pointerEvents: 'none', animation: 'kz-ripple .9s ease-out both' } })
       : null;
@@ -647,9 +687,10 @@ class App extends React.Component {
       notAsk: s.screen !== 'ask',
       question: s.question,
       hasQuestion: s.screen === 'result' && s.question.trim().length > 0,
-      stones,
+      coins,
       ripple,
       buildingHex,
+      throwReadout,
       counter: `${s.casts.length} / 6`,
       castDone: s.casts.length >= 6,
       showTapHint: s.screen === 'cast' && !s.everTossed,
@@ -733,10 +774,11 @@ class App extends React.Component {
       e('button', { type: 'button', 'aria-label': '石を投げる（押している間つづけて立てます）',
         onPointerDown: this.onCoinDown, onPointerUp: this.releaseCoin, onPointerCancel: this.releaseCoin, onLostPointerCapture: this.releaseCoin, onKeyDown: this.onCoinKey,
         style: { position: 'relative', display: 'flex', gap: '18px', alignItems: 'center', justifyContent: 'center', padding: '18px 8px', cursor: 'pointer', perspective: '700px', touchAction: 'none', border: 'none', background: 'none', font: 'inherit', outlineOffset: '6px', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' } },
-        out.stones.map((st, i) => e('div', { key: i, className: 'kz-coin', style: st.style })),
+        out.coins,
         out.ripple
       ),
-      e('div', { style: { height: '22px', marginTop: '4px' } },
+      e('div', { style: { height: '26px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, out.throwReadout),
+      e('div', { style: { height: '22px', marginTop: '2px' } },
         out.autoCasting ? e('p', { style: { fontSize: '12px', color: '#9aa0b8', letterSpacing: '0.14em', margin: 0 } }, '投げています…')
           : out.showTapHint ? e('p', { style: { fontSize: '12px', color: '#c3bdb2', letterSpacing: '0.14em', margin: 0, animation: 'kz-fade .8s ease both' } }, '石にふれる（押している間つづけて）') : null
       ),
