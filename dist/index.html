@@ -822,16 +822,74 @@ class App extends React.Component {
 
   setRefQuery = (e) => this.setState({ refQuery: e.target.value });
 
-  // measure the carousel stage so the focused card stays centered below ~380px
+  // measure the carousel stage + attach NATIVE touch listeners (passive:false). React's
+  // onTouch* handlers are passive, so they can't preventDefault — which is exactly why the
+  // mobile horizontal swipe was being lost to the page's vertical scroll. Native it is.
   stageRef = (node) => {
-    if (!node) { if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; } return; }
+    if (this._stageNode && this._stageNode !== node) {
+      const n = this._stageNode;
+      n.removeEventListener('touchstart', this._onTouchStart);
+      n.removeEventListener('touchmove', this._onTouchMove);
+      n.removeEventListener('touchend', this._onTouchEnd);
+      n.removeEventListener('touchcancel', this._onTouchEnd);
+      if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; }
+    }
+    this._stageNode = node || null;
+    if (!node) return;
     const measure = () => { const w = node.clientWidth; if (w && w !== this.state.stageW) this.setState({ stageW: w }); };
     measure();
     try { this._ro = new ResizeObserver(measure); this._ro.observe(node); } catch (_) {}
+    node.addEventListener('touchstart', this._onTouchStart, { passive: false });
+    node.addEventListener('touchmove', this._onTouchMove, { passive: false });
+    node.addEventListener('touchend', this._onTouchEnd, { passive: false });
+    node.addEventListener('touchcancel', this._onTouchEnd, { passive: false });
   };
 
-  // synchronous drag flags (not state) so the first pointermoves aren't dropped by React batching
+  // touch swipe (mobile): axis-locked so vertical scrolling still works, horizontal is ours
+  _onTouchStart = (e) => {
+    if (e.touches.length !== 1) return;
+    const t = e.touches[0];
+    this._tx = t.clientX; this._ty = t.clientY;
+    this._tAxis = null; this._dx = 0; this._moved = false; this._touching = true;
+  };
+  _onTouchMove = (e) => {
+    if (!this._touching || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    const dx = t.clientX - this._tx;
+    const dy = t.clientY - this._ty;
+    if (this._tAxis === null) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return; // wait until the direction is clear
+      this._tAxis = Math.abs(dx) > Math.abs(dy) ? 'x' : 'y';
+      if (this._tAxis === 'x') this.setState({ dragging: true });
+    }
+    if (this._tAxis !== 'x') return;  // vertical → let the page scroll
+    e.preventDefault();               // horizontal → we own it, stop the scroll
+    const fi = this.state.focusIndex;
+    let d = dx;
+    if ((fi === 0 && d > 0) || (fi === 2 && d < 0)) d *= 0.35;
+    d = Math.max(-240, Math.min(240, d));
+    if (Math.abs(d) > 5) this._moved = true;
+    this._dx = d;
+    this.setState({ dragDX: d });
+  };
+  _onTouchEnd = () => {
+    if (!this._touching) return;
+    this._touching = false;
+    if (this._tAxis !== 'x') { this._tAxis = null; return; }
+    this._tAxis = null;
+    this._endDrag();
+  };
+  _endDrag() {
+    const dx = this._dx || 0;
+    let fi = this.state.focusIndex;
+    if (dx < -40 && fi < 2) fi++;
+    else if (dx > 40 && fi > 0) fi--;
+    this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
+  }
+
+  // pointer drag (mouse / pen) — touch is handled natively above, so ignore touch pointers
   onDragStart = (e) => {
+    if (e.pointerType === 'touch') return;
     this._dragging = true;
     this._sx = e.clientX;
     this._dx = 0;
@@ -852,11 +910,7 @@ class App extends React.Component {
   onDragEnd = (e) => {
     if (!this._dragging) return;
     this._dragging = false;
-    const dx = this._dx || 0;
-    let fi = this.state.focusIndex;
-    if (dx < -40 && fi < 2) fi++;
-    else if (dx > 40 && fi > 0) fi--;
-    this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
+    this._endDrag();
     try { if (e && e.pointerId != null) e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
   };
   setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min(2, i)) });
@@ -1261,7 +1315,7 @@ class App extends React.Component {
       tabIndex: 0, role: 'group', 'aria-roledescription': 'カルーセル', 'aria-label': '前回・今回・次の卦（左右キーで切替）',
       onKeyDown: this.onStageKey,
       onPointerDown: this.onDragStart, onPointerMove: this.onDragMove, onPointerUp: this.onDragEnd, onPointerLeave: this.onDragEnd, onPointerCancel: this.onDragEnd,
-      style: { position: 'relative', width: '100%', overflow: 'hidden', touchAction: 'pan-y', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', outlineOffset: '4px' }
+      style: { position: 'relative', width: '100%', overflow: 'hidden', touchAction: 'pan-y pinch-zoom', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', outlineOffset: '4px' }
     },
       showLine ? e('div', { style: { position: 'absolute', left: 0, right: 0, top: '96px', height: '1px', background: '#ece9e3', pointerEvents: 'none' } }) : null,
       track
@@ -1352,21 +1406,33 @@ class App extends React.Component {
     // stones
     const dur = coinStyle === 'lift' ? 1100 : (coinStyle === 'ripple' ? 760 : 900);
     const ease = coinStyle === 'lift' ? 'cubic-bezier(.34,1.42,.5,1)' : (coinStyle === 'ripple' ? 'cubic-bezier(.2,.8,.2,1)' : 'cubic-bezier(.2,.72,.2,1)');
-    // two-faced coins: 表(front, ●) and 裏(back, ○) so you can see what came up
-    const faceShadow = 'inset 0 3px 6px rgba(255,255,255,.75), inset 0 -5px 9px rgba(120,108,92,.18), 0 10px 20px rgba(60,50,40,.10)';
-    const coinFace = (front) => e('div', {
-      style: {
-        position: 'absolute', inset: 0, borderRadius: '50%',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
-        border: '1px solid rgba(150,140,125,.28)', boxShadow: faceShadow,
-        background: front ? '#efe9e0' : '#e2dbcd',
-        transform: front ? 'none' : 'rotateX(180deg)',
-      }
-    }, front
-      ? e('div', { style: { width: '15px', height: '15px', borderRadius: '50%', background: this.hexToRgba(accent, 0.5) } })
-      : e('div', { style: { width: '15px', height: '15px', borderRadius: '50%', border: `2px solid ${this.hexToRgba(accent, 0.5)}`, boxSizing: 'border-box' } })
-    );
+    // two-faced go-stones: 表 = white stone (陽), 裏 = black stone (陰)
+    const coinFace = (front) => {
+      const face = front ? {
+        background: 'radial-gradient(circle at 36% 30%, #ffffff 0%, #f4f1ea 48%, #dcd6c9 100%)',
+        border: '1px solid rgba(150,140,125,.30)',
+        boxShadow: 'inset 0 2px 5px rgba(255,255,255,.95), inset 0 -8px 15px rgba(120,108,92,.22), 0 11px 22px rgba(60,50,40,.20)',
+        transform: 'none',
+      } : {
+        background: 'radial-gradient(circle at 36% 30%, #5b554d 0%, #2c2823 52%, #121110 100%)',
+        border: '1px solid rgba(10,8,6,.5)',
+        boxShadow: 'inset 0 2px 6px rgba(255,255,255,.22), inset 0 -8px 15px rgba(0,0,0,.55), 0 11px 22px rgba(20,16,12,.32)',
+        transform: 'rotateX(180deg)',
+      };
+      return e('div', {
+        style: Object.assign({
+          position: 'absolute', inset: 0, borderRadius: '50%',
+          backfaceVisibility: 'hidden', WebkitBackfaceVisibility: 'hidden',
+        }, face)
+      },
+        // polished-stone specular highlight
+        e('div', { style: {
+          position: 'absolute', top: '12%', left: '18%', width: '46%', height: '32%', borderRadius: '50%',
+          background: 'radial-gradient(closest-side, rgba(255,255,255,' + (front ? '0.9' : '0.55') + '), rgba(255,255,255,0))',
+          pointerEvents: 'none',
+        } })
+      );
+    };
     const coins = [0, 1, 2].map((i) => e('div', {
       key: i, className: 'kz-coin',
       style: {
