@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#e6e3dd">
+<title>兆 kizashi — 易経で、いまを見立てる</title>
+<meta name="description" content="ひとつの問いを立て、卦を立てて、いまを静かに見立てる。易経のスマホ占い『兆 kizashi』。">
+<meta property="og:title" content="兆 kizashi — 易経で、いまを見立てる">
+<meta property="og:description" content="ひとつの問いを立て、卦を立てて、いまを静かに見立てる。易経のスマホ占い。">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="兆 kizashi">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f3a6e'/%3E%3Ctext x='32' y='45' font-size='40' text-anchor='middle' fill='%23ffffff' font-family='serif'%3E兆%3C/text%3E%3C/svg%3E">
+<link rel="apple-touch-icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' fill='%232f3a6e'/%3E%3Ctext x='32' y='45' font-size='40' text-anchor='middle' fill='%23ffffff' font-family='serif'%3E兆%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="data:application/manifest+json,%7B%22name%22%3A%22%E5%85%86%20kizashi%22%2C%22short_name%22%3A%22%E5%85%86%22%2C%22start_url%22%3A%22.%22%2C%22display%22%3A%22standalone%22%2C%22background_color%22%3A%22%23e6e3dd%22%2C%22theme_color%22%3A%22%23e6e3dd%22%7D">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  body { background: #e6e3dd; }
+  @keyframes kz-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes kz-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes kz-ripple { from { opacity: .5; transform: translate(-50%,-50%) scale(.4); } to { opacity: 0; transform: translate(-50%,-50%) scale(2.4); } }
+  @keyframes kz-line-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* layout: mobile-first full-screen, desktop = phone mock frame */
+  .kz-wrap { min-height: 100dvh; width: 100%; display: flex; align-items: center; justify-content: center; background: #ffffff; font-family: 'Zen Kaku Gothic New', sans-serif; }
+  .kz-card { position: relative; width: 100%; min-height: 100dvh; background: #ffffff; overflow: hidden; display: flex; flex-direction: column; }
+  @media (min-width: 480px) {
+    .kz-wrap { background: #e6e3dd; padding: 24px; }
+    .kz-card { width: 408px; max-width: 408px; height: 858px; min-height: 0; max-height: calc(100dvh - 48px); border-radius: 46px; box-shadow: 0 30px 70px rgba(50,44,36,0.20), 0 4px 14px rgba(50,44,36,0.08); }
+  }
+
+  .kz-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; scrollbar-width: none; }
+  .kz-scroll::-webkit-scrollbar { width: 0; height: 0; }
+
+  /* focus / active states (were style-focus / style-active in DC) */
+  .kz-ta { transition: border-color .2s ease, background .2s ease; }
+  .kz-ta:focus { border-color: #2f3a6e; background: #ffffff; }
+  .kz-cta:active { opacity: .88; }
+  .kz-ghost:active { background: #faf9f7; }
+  .kz-ai:active { background: #f3f4f8; }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
+    .kz-coin { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./vendor/html-to-image.min.js"></script>
+<script src="./hexdata.js"></script>
+
+<script>
+/* ============================ APP ============================ */
+const e = React.createElement;
+
+const CONFIG = {
+  ACCENT: '#2f3a6e',
+  HEX_STYLE: 'bars',       // bars | blocks | thread
+  COIN_STYLE: 'settle',    // settle | lift | ripple
+  RESULT_LAYOUT: 'triptych', // triptych | rail | focus
+};
+
+class App extends React.Component {
+  state = {
+    screen: 'ask',
+    question: '',
+    casts: [],
+    rot: [0, 0, 0],
+    rotZ: [0, 0, 0],
+    tossing: false,
+    tossSeq: 0,
+    everTossed: false,
+    aiRevealed: false,
+    pastLines: null,
+    focusIndex: 1,
+    dragDX: 0,
+    dragging: false,
+    stageW: null,
+    navStack: [],
+    detailNum: null,
+    menuOpen: false,
+    refQuery: '',
+    viewing: false,
+    toast: '',
+    autoCasting: false,
+  };
+
+  setRefQuery = (e) => this.setState({ refQuery: e.target.value });
+
+  // measure the carousel stage so the focused card stays centered below ~380px
+  stageRef = (node) => {
+    if (!node) { if (this._ro) { try { this._ro.disconnect(); } catch (_) {} this._ro = null; } return; }
+    const measure = () => { const w = node.clientWidth; if (w && w !== this.state.stageW) this.setState({ stageW: w }); };
+    measure();
+    try { this._ro = new ResizeObserver(measure); this._ro.observe(node); } catch (_) {}
+  };
+
+  onDragStart = (e) => { this._sx = e.clientX; this.setState({ dragging: true, dragDX: 0 }); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} };
+  onDragMove = (e) => {
+    if (!this.state.dragging) return;
+    let dx = e.clientX - this._sx;
+    const fi = this.state.focusIndex;
+    if ((fi === 0 && dx > 0) || (fi === 2 && dx < 0)) dx *= 0.35;
+    dx = Math.max(-240, Math.min(240, dx));
+    this.setState({ dragDX: dx });
+  };
+  onDragEnd = () => {
+    if (!this.state.dragging) return;
+    const dx = this.state.dragDX;
+    let fi = this.state.focusIndex;
+    if (dx < -45 && fi < 2) fi++;
+    else if (dx > 45 && fi > 0) fi--;
+    this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
+  };
+  setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min(2, i)) });
+  onStageKey = (ev) => {
+    if (ev.key === 'ArrowLeft') { ev.preventDefault(); this.setFocus(this.state.focusIndex - 1); }
+    else if (ev.key === 'ArrowRight') { ev.preventDefault(); this.setFocus(this.state.focusIndex + 1); }
+  };
+
+  // ---- I Ching data ----
+  TRI = [
+    { bits: [1,1,1], k: '乾', e: '天', gloss: '創造と前進の力', verb: '天のようにはたらきかけ' },
+    { bits: [1,1,0], k: '兌', e: '澤', gloss: 'よろこびと交わり', verb: '澤のようにひらいて受けとり' },
+    { bits: [1,0,1], k: '離', e: '火', gloss: '明るさと知性', verb: '火のように照らして見きわめ' },
+    { bits: [1,0,0], k: '震', e: '雷', gloss: '始まりと、震わす動き', verb: '雷のように踏み出し' },
+    { bits: [0,1,1], k: '巽', e: '風', gloss: '浸透としなやかさ', verb: '風のようにじわり届かせ' },
+    { bits: [0,1,0], k: '坎', e: '水', gloss: '試練と深まり', verb: '水のように低きへ流れ' },
+    { bits: [0,0,1], k: '艮', e: '山', gloss: '静止と、たくわえ', verb: '山のようにいったん止まり' },
+    { bits: [0,0,0], k: '坤', e: '地', gloss: '受容と育み', verb: '地のように受けとめ' },
+  ];
+  // KW[lowerIdx][upperIdx], trigram order 乾兌離震巽坎艮坤
+  KW = [
+    [1,43,14,34,9,5,26,11],
+    [10,58,38,54,61,60,41,19],
+    [13,49,30,55,37,63,22,36],
+    [25,17,21,51,42,3,27,24],
+    [44,28,50,32,57,48,18,46],
+    [6,47,64,40,59,29,4,7],
+    [33,31,56,62,53,39,52,15],
+    [12,45,35,16,20,8,23,2],
+  ];
+  NAMES = [null,'乾為天','坤為地','水雷屯','山水蒙','水天需','天水訟','地水師','水地比','風天小畜','天澤履','地天泰','天地否','天火同人','火天大有','地山謙','雷地豫','澤雷随','山風蠱','地澤臨','風地観','火雷噬嗑','山火賁','山地剝','地雷復','天雷无妄','山天大畜','山雷頤','澤風大過','坎為水','離為火','澤山咸','雷風恒','天山遯','雷天大壮','火地晋','地火明夷','風火家人','火澤睽','水山蹇','雷水解','山澤損','風雷益','澤天夬','天風姤','澤地萃','地風升','澤水困','水風井','澤火革','火風鼎','震為雷','艮為山','風山漸','雷澤帰妹','雷火豊','火山旅','巽為風','兌為澤','風水渙','水澤節','風澤中孚','雷山小過','水火既済','火水未済'];
+
+  triIdx(bits) {
+    for (let i = 0; i < 8; i++) {
+      const t = this.TRI[i].bits;
+      if (t[0] === bits[0] && t[1] === bits[1] && t[2] === bits[2]) return i;
+    }
+    return 0;
+  }
+  hexFromLines(vals) {
+    const lo = this.triIdx(vals.slice(0, 3));
+    const up = this.triIdx(vals.slice(3, 6));
+    const num = this.KW[lo][up];
+    return { num, name: this.NAMES[num], lower: this.TRI[lo], upper: this.TRI[up], lines: vals.slice() };
+  }
+  hexToRgba(hex, a) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  accent() { return CONFIG.ACCENT; }
+
+  // ---- history store (localStorage, newest-first) ----
+  SEED_LINES = [0,0,1,0,0,0]; // 地山謙 — first-timers' "previous"
+  loadHistory() { try { return JSON.parse(localStorage.getItem('kz_history') || '[]') || []; } catch (e) { return []; } }
+  saveHistory(arr) { try { localStorage.setItem('kz_history', JSON.stringify(arr)); } catch (e) {} }
+  newId() { return 'r' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
+
+  componentDidMount() {
+    // migrate a legacy single kz_prev into the history array
+    try {
+      if (!localStorage.getItem('kz_history')) {
+        const raw = localStorage.getItem('kz_prev');
+        if (raw) {
+          const p = JSON.parse(raw);
+          if (p && p.lines && p.lines.length === 6) {
+            const present = this.hexFromLines(p.lines);
+            this.saveHistory([{
+              id: this.newId(), ts: Date.now(), date: new Date().toISOString().slice(0, 10),
+              question: '', lines: p.lines, changing: [false,false,false,false,false,false],
+              present: { num: present.num, name: present.name },
+              future: { num: present.num, name: present.name }, pastLines: null, migrated: true,
+            }]);
+          }
+        }
+      }
+    } catch (e) {}
+  }
+
+  // ---- actions ----
+  setQuestion = (e) => this.setState({ question: e.target.value });
+
+  _resetAuto() {
+    this._held = false;
+    if (this._autoT) { clearTimeout(this._autoT); this._autoT = null; }
+  }
+
+  startCast = () => {
+    this._resetAuto();
+    this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false, navStack: [], menuOpen: false, autoCasting: false });
+  };
+
+  toss = () => {
+    if (this.state.tossing || this.state.casts.length >= 6) return;
+    const style = CONFIG.COIN_STYLE;
+    const newRot = this.state.rot.slice();
+    const newRotZ = this.state.rotZ.slice();
+    let y = 0;
+    for (let i = 0; i < 3; i++) {
+      const bit = Math.random() < 0.5 ? 1 : 0;
+      y += bit;
+      const baseSpin = style === 'ripple' ? 180 : 720;
+      newRot[i] += baseSpin + Math.floor(Math.random() * 4) * 180;
+      if (style === 'lift') newRotZ[i] += (Math.random() < 0.5 ? -1 : 1) * (160 + Math.floor(Math.random() * 3) * 360);
+    }
+    const value = (y % 2 === 1) ? 1 : 0;
+    const changing = (y === 0 || y === 3);
+    this.setState({ rot: newRot, rotZ: newRotZ, tossing: true, everTossed: true, tossSeq: this.state.tossSeq + 1 });
+    const dur = style === 'lift' ? 1100 : (style === 'ripple' ? 760 : 900);
+    setTimeout(() => {
+      this.setState((s) => ({ casts: s.casts.concat([{ value, changing }]), tossing: false }), () => {
+        // press-and-hold: while held, keep tossing until 6; else stop
+        if (this._held && this.state.casts.length < 6) {
+          this._autoT = setTimeout(() => this.pumpToss(), 90);
+        } else if (this.state.autoCasting && (!this._held || this.state.casts.length >= 6)) {
+          this.setState({ autoCasting: false });
+        }
+      });
+    }, dur + 160);
+  };
+
+  // ---- press and hold: keep throwing the stones while held, stop on release ----
+  pumpToss() { if (this._held && !this.state.tossing && this.state.casts.length < 6) this.toss(); }
+  onCoinDown = (ev) => {
+    if (this.state.casts.length >= 6) return;
+    try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) {}
+    this._held = true;
+    if (!this.state.autoCasting) this.setState({ autoCasting: true });
+    this.pumpToss();
+  };
+  releaseCoin = () => {
+    if (!this._held) return;
+    this._held = false;
+    if (this._autoT) { clearTimeout(this._autoT); this._autoT = null; }
+    if (this.state.autoCasting) this.setState({ autoCasting: false });
+  };
+  onCoinKey = (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ' || ev.key === 'Spacebar') {
+      ev.preventDefault();
+      if (!ev.repeat) this.toss(); // keyboard: one line per press
+    }
+  };
+
+  goResult = () => {
+    if (this.state.casts.length < 6) return;
+    let used = false;
+    let pastLines = null;
+    const hist = this.loadHistory();
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      used = localStorage.getItem('kz_ai_date') === today;
+    } catch (e) {}
+    pastLines = (hist.length && hist[0].lines && hist[0].lines.length === 6) ? hist[0].lines : this.SEED_LINES.slice();
+    this.setState({ screen: 'result', aiRevealed: used, pastLines, focusIndex: 1, dragDX: 0, dragging: false, viewing: false });
+    // record this reading at the head of history
+    try {
+      const present = this.hexFromLines(this.state.casts.map(c => c.value));
+      const changing = this.state.casts.map(c => !!c.changing);
+      const futureLines = this.state.casts.map(c => c.changing ? (1 - c.value) : c.value);
+      const future = this.hexFromLines(futureLines);
+      const rec = {
+        id: this.newId(), ts: Date.now(), date: new Date().toISOString().slice(0, 10),
+        question: this.state.question, lines: present.lines, changing,
+        present: { num: present.num, name: present.name },
+        future: { num: future.num, name: future.name }, pastLines,
+      };
+      this.saveHistory([rec].concat(hist).slice(0, 200));
+    } catch (e) {}
+  };
+
+  // ---- history actions ----
+  viewReading = (rec) => {
+    const casts = rec.lines.map((v, i) => ({ value: v, changing: !!(rec.changing && rec.changing[i]) }));
+    this.go('result', {
+      casts, question: rec.question || '', pastLines: rec.pastLines || null,
+      focusIndex: 1, dragDX: 0, dragging: false, aiRevealed: true, viewing: true,
+    });
+  };
+  deleteReading = (id) => { this.saveHistory(this.loadHistory().filter((r) => r.id !== id)); this.forceUpdate(); };
+  clearHistory = () => { this.saveHistory([]); this.forceUpdate(); };
+
+  again = () => this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, focusIndex: 1, dragDX: 0, dragging: false, navStack: [], menuOpen: false, viewing: false });
+
+  // ---- navigation (state-based router with a back stack) ----
+  go = (screen, extra) => this.setState((s) => ({
+    navStack: s.navStack.concat([{ screen: s.screen, detailNum: s.detailNum }]),
+    screen, menuOpen: false, ...(extra || {}),
+  }));
+  back = () => this.setState((s) => {
+    if (s.navStack.length) {
+      const prev = s.navStack[s.navStack.length - 1];
+      return { navStack: s.navStack.slice(0, -1), screen: prev.screen, detailNum: prev.detailNum, menuOpen: false };
+    }
+    return { screen: 'ask', menuOpen: false };
+  });
+  onBack = () => {
+    const s = this.state;
+    if (s.navStack.length) return this.back();
+    return this.setState({ screen: 'ask', menuOpen: false }); // cast / result → ask
+  };
+  toggleMenu = () => this.setState((s) => ({ menuOpen: !s.menuOpen }));
+  closeMenu = () => this.setState({ menuOpen: false });
+
+  requestAI = () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem('kz_ai_date', today);
+    } catch (e) {}
+    this.setState({ aiRevealed: true });
+  };
+
+  // ---- share / image ----
+  shareCardRef = (n) => { this._shareCard = n; };
+  _clearToast() { if (this._toastT) clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 2200); }
+  _present() { return this.hexFromLines(this.state.casts.map((c) => c.value)); }
+
+  composeShareText(present) {
+    const h = this.hexContent(present.num);
+    const q = (this.state.question && this.state.question.trim()) ? '問い：' + this.state.question.trim() + '\n' : '';
+    return q + '今回の卦は『' + present.name + '』（第' + present.num + '卦）。' + (h.summary || '') + '\n— 兆 kizashi';
+  }
+
+  shareReading = async () => {
+    if (this.state.casts.length < 6) return;
+    const present = this._present();
+    const text = this.composeShareText(present);
+    try {
+      if (typeof navigator !== 'undefined' && navigator.share) {
+        await navigator.share({ title: '兆 kizashi', text, url: location.href });
+        return;
+      }
+      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text + '\n' + location.href);
+        this.setState({ toast: 'コピーしました' }); this._clearToast();
+        return;
+      }
+      this.setState({ toast: '共有に対応していません' }); this._clearToast();
+    } catch (e) { /* ユーザーがキャンセルした等 */ }
+  };
+
+  saveImage = async () => {
+    const node = this._shareCard;
+    if (!node || typeof htmlToImage === 'undefined') { this.setState({ toast: '画像を作成できません' }); this._clearToast(); return; }
+    try {
+      this.setState({ toast: '画像を作成中…' });
+      if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
+      const dataUrl = await htmlToImage.toPng(node, { pixelRatio: 2, backgroundColor: '#e6e3dd', cacheBust: true });
+      const present = this._present();
+      const fname = 'kizashi-' + present.num + '-' + present.name + '.png';
+      let shared = false;
+      try {
+        const blob = await (await fetch(dataUrl)).blob();
+        const file = new File([blob], fname, { type: 'image/png' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: '兆 kizashi' });
+          shared = true;
+        }
+      } catch (_) {}
+      if (!shared) {
+        const a = document.createElement('a');
+        a.href = dataUrl; a.download = fname;
+        document.body.appendChild(a); a.click(); a.remove();
+        this.setState({ toast: '画像を保存しました' }); this._clearToast();
+      } else {
+        this.setState({ toast: '' });
+      }
+    } catch (e) {
+      this.setState({ toast: '画像の作成に失敗しました' }); this._clearToast();
+    }
+  };
+
+  renderShareCard(present) {
+    if (!present) return null;
+    const h = this.hexContent(present.num);
+    const date = new Date().toISOString().slice(0, 10);
+    const hexEl = this.renderHexagram(present.lines.map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 200 });
+    const q = this.state.question && this.state.question.trim();
+    return e('div', { ref: this.shareCardRef, 'aria-hidden': true, style: { position: 'fixed', left: '-10000px', top: 0, width: '540px', padding: '52px 46px', background: '#e6e3dd', fontFamily: "'Zen Kaku Gothic New', sans-serif", pointerEvents: 'none' } },
+      e('div', { style: { background: '#ffffff', borderRadius: '30px', padding: '52px 44px', textAlign: 'center', boxShadow: '0 20px 50px rgba(50,44,36,0.12)' } },
+        e('div', { style: { display: 'flex', alignItems: 'baseline', justifyContent: 'center', gap: '12px', marginBottom: '34px' } },
+          e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '30px', color: '#2b2823', letterSpacing: '0.08em' } }, '兆'),
+          e('span', { style: { fontSize: '13px', letterSpacing: '0.34em', color: '#b6b0a6', textTransform: 'uppercase' } }, 'kizashi')
+        ),
+        q ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '18px', lineHeight: 1.8, color: '#9a948b', marginBottom: '30px' } }, '「' + q + '」') : null,
+        e('div', { style: { display: 'flex', justifyContent: 'center', margin: '8px 0 30px' } }, hexEl),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '30px', color: '#2b2823', letterSpacing: '0.06em' } }, present.name),
+        e('div', { style: { fontSize: '14px', color: '#c3bdb2', marginTop: '8px', letterSpacing: '0.1em' } }, '第' + present.num + '卦'),
+        h.judgment ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 1.9, color: '#4a4640', margin: '26px auto 0', maxWidth: '380px' } }, h.judgment) : null,
+        e('div', { style: { fontSize: '12px', color: '#b6b0a6', marginTop: '34px', letterSpacing: '0.12em' } }, date + ' · 兆 kizashi')
+      )
+    );
+  }
+
+  // ---- hexagram rendering ----
+  renderHexagram(lines, opts) {
+    const accent = this.accent();
+    const style = opts.style || 'bars';
+    const w = opts.w;
+    const faded = !!opts.faded;
+    const showChanging = !!opts.showChanging;
+    const f = w / 104;
+    let barH, gap, radius, yinGap;
+    if (style === 'blocks') { barH = 20 * f; gap = 8 * f; radius = 6 * f; yinGap = 14 * f; }
+    else if (style === 'thread') { barH = Math.max(2.5, 3 * f); gap = 17 * f; radius = 2; yinGap = 22 * f; }
+    else { barH = 13 * f; gap = 11 * f; radius = 999; yinGap = 18 * f; }
+    const col = faded ? this.hexToRgba(accent, 0.32) : accent;
+    const blockBg = faded ? this.hexToRgba(accent, 0.13) : this.hexToRgba(accent, 0.9);
+    const fill = style === 'blocks' ? blockBg : col;
+    const rows = lines.slice().reverse();
+    return e('div', { style: { display: 'flex', flexDirection: 'column', gap: gap + 'px', width: w + 'px' } },
+      rows.map((ln, i) => {
+        if (ln == null) {
+          return e('div', { key: i, style: { height: barH + 'px', width: '100%', borderRadius: radius + 'px', background: this.hexToRgba(accent, 0.06) } });
+        }
+        const seg = (extra) => Object.assign({ height: barH + 'px', borderRadius: radius + 'px', background: fill }, extra);
+        let bar;
+        if (ln.v === 1) {
+          bar = e('div', { style: seg({ width: '100%' }) });
+        } else {
+          const sw = `calc((100% - ${yinGap}px) / 2)`;
+          bar = e('div', { style: { display: 'flex', width: '100%', height: barH + 'px', animation: opts.animate ? 'kz-line-in .5s ease both' : 'none' } },
+            e('div', { style: seg({ width: sw }) }),
+            e('div', { style: { width: yinGap + 'px' } }),
+            e('div', { style: seg({ width: sw }) }));
+        }
+        const inner = e('div', { style: { width: '100%', animation: opts.animate ? 'kz-line-in .5s ease both' : 'none' } }, bar);
+        if (showChanging && ln.changing) {
+          const ms = Math.max(10, barH * 1.5);
+          const ring = e('div', { key: 'r', style: { position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', width: ms + 'px', height: ms + 'px', borderRadius: '50%', border: `2px solid ${accent}`, background: '#ffffff', boxSizing: 'border-box' } });
+          return e('div', { key: i, style: { position: 'relative', display: 'flex', alignItems: 'center' } }, inner, ring);
+        }
+        return inner;
+      })
+    );
+  }
+
+  hexCard(label, hex, main, hstyle) {
+    const mincho = "'Shippori Mincho', serif";
+    const w = main ? 104 : 58;
+    const hexEl = this.renderHexagram(
+      hex.lines.map((v, i) => ({ v, changing: main && this.changing && this.changing[i] })),
+      { style: hstyle, w, faded: !main, showChanging: main }
+    );
+    return e('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', flex: 'none', opacity: main ? 1 : 0.62 } },
+      e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: main ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, label),
+      e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: main ? '150px' : '92px' } }, hexEl),
+      e('div', { style: { fontFamily: mincho, fontSize: main ? '20px' : '14px', color: main ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em', lineHeight: 1.4 } }, hex.name),
+      e('div', { style: { fontSize: main ? '11px' : '10px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + hex.num + '卦')
+    );
+  }
+
+  buildCarousel(cells, fi, dragDX, dragging) {
+    const accent = this.accent();
+    const layout = CONFIG.RESULT_LAYOUT;
+    const hstyle = CONFIG.HEX_STYLE;
+    const C = 200;
+    const W = this.state.stageW || 356;
+    let peekScale, peekOpacity, showLine;
+    if (layout === 'focus') { peekScale = 0.34; peekOpacity = 0; showLine = false; }
+    else if (layout === 'rail') { peekScale = 0.5; peekOpacity = 0.32; showLine = true; }
+    else { peekScale = 0.62; peekOpacity = 0.42; showLine = false; }
+    const baseX = W / 2 - (fi * C + C / 2) + (dragDX || 0);
+
+    const track = e('div', {
+      style: {
+        display: 'flex', width: (C * cells.length) + 'px',
+        transform: `translateX(${baseX}px)`,
+        transition: dragging ? 'none' : 'transform .42s cubic-bezier(.2,.7,.2,1)',
+      }
+    }, cells.map((c, i) => {
+      const focused = i === fi;
+      const hexEl = this.renderHexagram(
+        c.hex.lines.map((v, k) => ({ v, changing: c.role === 'present' && this.changing && this.changing[k] })),
+        { style: hstyle, w: 104, faded: !focused, showChanging: c.role === 'present' }
+      );
+      return e('div', {
+        key: i,
+        onClick: focused ? undefined : (() => this.setFocus(i)),
+        style: {
+          width: C + 'px', flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+          transform: `scale(${focused ? 1 : peekScale})`,
+          opacity: focused ? 1 : peekOpacity,
+          transition: 'transform .42s cubic-bezier(.2,.7,.2,1), opacity .42s ease',
+          cursor: focused ? 'default' : 'pointer',
+        }
+      },
+        e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: focused ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, c.label),
+        e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '20px', color: focused ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em' } }, c.hex.name),
+        e('div', { style: { fontSize: '11px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
+      );
+    }));
+
+    const stage = e('div', {
+      ref: this.stageRef,
+      tabIndex: 0, role: 'group', 'aria-roledescription': 'カルーセル', 'aria-label': '前回・今回・次の卦（左右キーで切替）',
+      onKeyDown: this.onStageKey,
+      onPointerDown: this.onDragStart, onPointerMove: this.onDragMove, onPointerUp: this.onDragEnd, onPointerLeave: this.onDragEnd, onPointerCancel: this.onDragEnd,
+      style: { position: 'relative', width: '100%', overflow: 'hidden', touchAction: 'pan-y', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', outlineOffset: '4px' }
+    },
+      showLine ? e('div', { style: { position: 'absolute', left: 0, right: 0, top: '96px', height: '1px', background: '#ece9e3', pointerEvents: 'none' } }) : null,
+      track
+    );
+
+    const dots = e('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '12px', marginTop: '22px' } },
+      cells.map((c, i) => e('button', {
+        key: i, onClick: () => this.setFocus(i),
+        'aria-label': c.label + 'へ', 'aria-current': i === fi ? 'true' : undefined,
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', border: 'none', background: 'none', padding: '2px' }
+      },
+        e('div', { style: { width: i === fi ? '22px' : '7px', height: '7px', borderRadius: '4px', background: i === fi ? accent : '#dcd8d0', transition: 'all .3s ease' } }),
+        e('div', { style: { fontSize: '9.5px', letterSpacing: '0.16em', color: i === fi ? '#8c867d' : '#c3bdb2' } }, c.cap)
+      ))
+    );
+
+    const hint = e('div', { style: { textAlign: 'center', marginTop: '16px', fontSize: '11px', letterSpacing: '0.16em', color: '#c8c2b7' } }, '⟵  スワイプで前後の卦へ  ⟶');
+
+    const SR = { position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
+    const live = e('div', { 'aria-live': 'polite', style: SR }, cells[fi] ? (cells[fi].label + '、' + cells[fi].hex.name + '、第' + cells[fi].hex.num + '卦') : '');
+
+    return e('div', null, stage, dots, hint, live);
+  }
+
+  hexContent(num) { return (typeof HEX !== 'undefined' && HEX[num]) ? HEX[num] : {}; }
+
+  // The AI reading seam. v1 synthesizes locally from authored HEX content + trigram
+  // glosses; to enable a real backend later, replace the body with:
+  //   const r = await fetch(CONFIG.AI_ENDPOINT, { method:'POST', body: JSON.stringify(ctx) });
+  //   return (await r.json()).text;
+  aiStub(ctx) {
+    const hex = ctx.present, f = ctx.future, cc = ctx.changingCount;
+    const lo = hex.lower, up = hex.upper;
+    const h = this.hexContent(hex.num);
+    const q = (ctx.question && ctx.question.trim()) ? `「${ctx.question.trim()}」という問いを` : 'あなたの問いを';
+    const core = h.summary || `${lo.gloss}を土台に、${up.gloss}が上に立つ形`;
+    const move = h.advice || `${up.gloss}の方へ半歩だけ重心を移してみること`;
+    if (cc > 0) {
+      return `${q}『${hex.name}』として見ると、${core} いま動いている線は、${f.name}という次の景色を準備しています。${move} 急いで結論を出すより、その一歩が、見えるものを変えていきます。変化は外から来るのではなく、すでにあなたの内側で始まっています。`;
+    }
+    return `${q}『${hex.name}』として見ると、${core} 動く線がないのは、いまが「整えるとき」だという合図です。${move} 新しい一手より、足元をていねいに保つこと。その落ち着きが、次の問いへ進む土台になります。`;
+  }
+
+  buildInterpFor(hex, role, ctx) {
+    const p = ctx.present, f = ctx.future, cc = ctx.changingCount;
+    const lo = hex.lower, up = hex.upper;
+    const h = this.hexContent(hex.num);
+    const judg = h.judgment ? `——「${h.judgment}」` : '';
+    const meaning = h.summary || `下に${lo.e}（${lo.gloss}）、上に${up.e}（${up.gloss}）が重なる形です。`;
+    const guide = h.advice || `${lo.verb}、その上で${up.verb}——そんな構えが、この問いには合っているのかもしれません。`;
+    if (role === 'present') {
+      const para1 = `いま現れているのは『${hex.name}』${judg}。${meaning}`;
+      const para2 = guide;
+      let transitionText, closing;
+      if (cc > 0) {
+        transitionText = `${cc}つの動く線が、状況を『${f.name}』へと連れていこうとしています。${hex.name}から${f.name}へ。${f.upper.e}が示すのは、${f.upper.gloss}に向かう流れです。いまの形に、すでに次の兆しがふくまれています。`;
+        closing = '易経は「当てるもの」ではなく、見方をひとつ増やすための鏡です。どう動くかを決めるのは、あなた自身。';
+      } else {
+        transitionText = `動く線はありません。いまは形を変えず、『${hex.name}』のままに置いておくとき。焦って次へ進めるより、この状態を静かに保つことに意味があります。`;
+        closing = '易経は「当てるもの」ではなく、見方をひとつ増やすための鏡です。今日はこの一卦を、そっと胸に置いておいてください。';
+      }
+      return { para1, para2, transitionText, closing };
+    }
+    if (role === 'past') {
+      return {
+        para1: `前回、あなたに現れていたのは『${hex.name}』。${meaning}`,
+        para2: `${lo.verb}、${up.verb}——そんな時期を、あなたは通ってきました。`,
+        transitionText: `過去は変えられませんが、読み直すことはできます。『${hex.name}』のころに見えていたものが、いまの『${p.name}』の背景になっています。`,
+        closing: '前回の卦は、いまを映す鏡のひとつ。重ねて見ると、流れがほのかに見えてきます。',
+      };
+    }
+    return {
+      para1: `次に進もうとしているのは『${hex.name}』。${meaning}`,
+      para2: `${lo.verb}、その上で${up.verb}——そんな景色へ、いまの問いはひらかれようとしています。`,
+      transitionText: cc > 0
+        ? `『${p.name}』の動く線が、この『${hex.name}』を呼んでいます。まだ確定した未来ではなく、いまの構えがつくる「ありうる次」です。`
+        : `いまは動く線がないため、当面は『${p.name}』のまま。もし次へ進むとすれば、『${hex.name}』のような形が考えられます。`,
+      closing: `未来は決まっていません。『${hex.name}』は、向かいうる方向のひとつ。選ぶのは、あなたです。`,
+    };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const accent = this.accent();
+    const hstyle = CONFIG.HEX_STYLE;
+    const coinStyle = CONFIG.COIN_STYLE;
+
+    // stones
+    const dur = coinStyle === 'lift' ? 1100 : (coinStyle === 'ripple' ? 760 : 900);
+    const ease = coinStyle === 'lift' ? 'cubic-bezier(.34,1.42,.5,1)' : (coinStyle === 'ripple' ? 'cubic-bezier(.2,.8,.2,1)' : 'cubic-bezier(.2,.72,.2,1)');
+    const stones = [0, 1, 2].map((i) => ({
+      style: {
+        width: '72px', height: '72px', borderRadius: '50%', background: '#ece7df',
+        border: '1px solid rgba(150,140,125,.28)',
+        boxShadow: 'inset 0 3px 6px rgba(255,255,255,.75), inset 0 -5px 9px rgba(120,108,92,.18), 0 10px 20px rgba(60,50,40,.10)',
+        flex: 'none',
+        transition: `transform ${dur}ms ${ease} ${i * 70}ms`,
+        transform: `rotateX(${s.rot[i]}deg) rotateZ(${s.rotZ[i]}deg)`,
+      }
+    }));
+    const ripple = (coinStyle === 'ripple' && s.tossing)
+      ? e('div', { key: s.tossSeq, style: { position: 'absolute', left: '50%', top: '50%', width: '160px', height: '160px', borderRadius: '50%', border: `1.5px solid ${this.hexToRgba(accent, 0.6)}`, pointerEvents: 'none', animation: 'kz-ripple .9s ease-out both' } })
+      : null;
+
+    // building hexagram (cast screen): 6 slots, fill from bottom
+    const buildLines = [];
+    for (let i = 0; i < 6; i++) {
+      buildLines.push(i < s.casts.length ? { v: s.casts[i].value, changing: false } : null);
+    }
+    const buildingHex = this.renderHexagram(buildLines, { style: hstyle, w: 116, faded: false, showChanging: false, animate: true });
+
+    const out = {
+      isAsk: s.screen === 'ask',
+      isCast: s.screen === 'cast',
+      isResult: s.screen === 'result',
+      isAbout: s.screen === 'about',
+      isHistory: s.screen === 'history',
+      isReference: s.screen === 'reference',
+      isDetail: s.screen === 'detail',
+      detailNum: s.detailNum,
+      menuOpen: s.menuOpen,
+      toast: s.toast,
+      notAsk: s.screen !== 'ask',
+      question: s.question,
+      hasQuestion: s.screen === 'result' && s.question.trim().length > 0,
+      stones,
+      ripple,
+      buildingHex,
+      counter: `${s.casts.length} / 6`,
+      castDone: s.casts.length >= 6,
+      showTapHint: s.screen === 'cast' && !s.everTossed,
+      autoCasting: s.autoCasting,
+      // result defaults
+      resultTriple: null,
+      kicker: '今回の見立て',
+      para1: '', para2: '', transitionText: '', closing: '',
+      isPresentFocus: false, showFocusNote: false,
+      aiText: '', aiRevealed: false, aiButton: false, aiChip: '',
+      present: null,
+    };
+
+    if (s.screen === 'result' && s.casts.length === 6) {
+      const present = this.hexFromLines(s.casts.map(c => c.value));
+      const futureLines = s.casts.map(c => c.changing ? (1 - c.value) : c.value);
+      const future = this.hexFromLines(futureLines);
+      const past = (s.pastLines && s.pastLines.length === 6) ? this.hexFromLines(s.pastLines) : present;
+      this.changing = s.casts.map(c => c.changing);
+      const changingCount = this.changing.filter(Boolean).length;
+      const ctx = { present, future, past, changingCount, question: s.question };
+      const cells = [
+        { role: 'past', label: '前回の卦', kicker: '前回の見立て', cap: 'これまで', hex: past, interp: this.buildInterpFor(past, 'past', ctx) },
+        { role: 'present', label: '今回の卦', kicker: '今回の見立て', cap: 'いま', hex: present, interp: this.buildInterpFor(present, 'present', ctx) },
+        { role: 'future', label: '次に進む卦', kicker: '次の見立て', cap: 'これから', hex: future, interp: this.buildInterpFor(future, 'future', ctx) },
+      ];
+      const fi = Math.max(0, Math.min(2, s.focusIndex));
+      out.resultTriple = this.buildCarousel(cells, fi, s.dragDX, s.dragging);
+      const cur = cells[fi];
+      out.kicker = cur.kicker;
+      out.para1 = cur.interp.para1;
+      out.para2 = cur.interp.para2;
+      out.transitionText = cur.interp.transitionText;
+      out.closing = cur.interp.closing;
+      out.isPresentFocus = fi === 1;
+      out.showFocusNote = fi !== 1;
+      out.aiText = this.aiStub(ctx);
+      out.aiRevealed = s.aiRevealed;
+      out.aiButton = !s.aiRevealed;
+      out.aiChip = s.aiRevealed ? '今日のぶん · 完了' : '残り 1 / 日';
+      out.present = present;
+    }
+
+    return out;
+  }
+
+  // ---- screens (was the <x-dc> template) ----
+  renderAsk(out) {
+    return e('div', { key: 'ask', style: { padding: '38px 30px 44px', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '22px' } }, '問いを立てる'),
+      e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '29px', lineHeight: 1.62, color: '#2b2823', margin: '0 0 18px', letterSpacing: '0.01em' } }, 'ひとつの問いを、', e('br'), '心に想ってください。'),
+      e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#8c867d', margin: '0 0 34px', textWrap: 'pretty' } }, '答えを急がなくていい。いま、気にかかっていることを、ただ一つだけ。形にならなくても、胸のうちにあれば十分です。'),
+      e('label', { style: { display: 'block', fontSize: '12px', letterSpacing: '0.12em', color: '#aaa49a', marginBottom: '10px' } }, '書きとめておく（任意）'),
+      e('textarea', {
+        className: 'kz-ta',
+        value: out.question, onChange: this.setQuestion,
+        placeholder: 'たとえば「この仕事を続けるべきか迷っている」',
+        style: { width: '100%', minHeight: '116px', border: '1px solid #ece9e3', borderRadius: '18px', padding: '16px 17px', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14.5px', lineHeight: 1.8, color: '#2b2823', background: '#fcfbf9', resize: 'none', outline: 'none' }
+      }),
+      e('button', { onClick: this.startCast, className: 'kz-cta', style: { width: '100%', marginTop: '26px', padding: '17px', border: 'none', borderRadius: '18px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15.5px', fontWeight: 500, letterSpacing: '0.12em', cursor: 'pointer' } }, '卦を立てる'),
+      e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9', display: 'flex', gap: '12px' } },
+        e('span', { style: { fontFamily: "'Shippori Mincho', serif", color: '#cfcabf', fontSize: '16px', flex: 'none', lineHeight: 1.4 } }, '作法'),
+        e('p', { style: { fontSize: '12.5px', lineHeight: 1.9, color: '#aaa49a', margin: 0 } }, '易経では、同じ問いを何度もは占いません。一度、静かに向き合うための作法です。')
+      ),
+      e('div', { style: { marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '22px' } },
+        e('button', { onClick: () => this.go('reference'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, '64卦をみる'),
+        e('button', { onClick: () => this.go('about'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, 'はじめに')
+      )
+    );
+  }
+
+  renderCast(out) {
+    return e('div', { key: 'cast', style: { padding: '30px 30px 40px', animation: 'kz-fade-up .6s ease both', display: 'flex', flexDirection: 'column', alignItems: 'center' } },
+      e('div', { style: { width: '100%', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' } },
+        e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase' } }, '卦を立てる'),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14px', color: '#b6b0a6', letterSpacing: '0.1em' } }, out.counter)
+      ),
+      e('h2', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '22px', lineHeight: 1.6, color: '#2b2823', margin: '14px 0 8px', textAlign: 'center' } }, '三つの石を、六度。'),
+      e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#8c867d', margin: '0 0 26px', textAlign: 'center', maxWidth: '270px' } }, '想いながら、石にふれてください。ふれるたび、線がひとつ積もります。'),
+      e('div', { style: { minHeight: '188px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', marginBottom: '30px' } }, out.buildingHex),
+      e('button', { type: 'button', 'aria-label': '石を投げる（押している間つづけて立てます）',
+        onPointerDown: this.onCoinDown, onPointerUp: this.releaseCoin, onPointerCancel: this.releaseCoin, onLostPointerCapture: this.releaseCoin, onKeyDown: this.onCoinKey,
+        style: { position: 'relative', display: 'flex', gap: '18px', alignItems: 'center', justifyContent: 'center', padding: '18px 8px', cursor: 'pointer', perspective: '700px', touchAction: 'none', border: 'none', background: 'none', font: 'inherit', outlineOffset: '6px', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' } },
+        out.stones.map((st, i) => e('div', { key: i, className: 'kz-coin', style: st.style })),
+        out.ripple
+      ),
+      e('div', { style: { height: '22px', marginTop: '4px' } },
+        out.autoCasting ? e('p', { style: { fontSize: '12px', color: '#9aa0b8', letterSpacing: '0.14em', margin: 0 } }, '投げています…')
+          : out.showTapHint ? e('p', { style: { fontSize: '12px', color: '#c3bdb2', letterSpacing: '0.14em', margin: 0, animation: 'kz-fade .8s ease both' } }, '石にふれる（押している間つづけて）') : null
+      ),
+      e('div', { style: { height: '64px', marginTop: '16px', display: 'flex', alignItems: 'center' } },
+        out.castDone ? e('button', { onClick: this.goResult, style: { padding: '15px 44px', border: 'none', borderRadius: '16px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15px', fontWeight: 500, letterSpacing: '0.14em', cursor: 'pointer', animation: 'kz-fade-up .7s ease both' } }, '結果を見る') : null
+      )
+    );
+  }
+
+  renderResult(out) {
+    const para = (txt, i) => e('p', { key: i, style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 16px', textWrap: 'pretty' } }, txt);
+    return e('div', { key: 'result', style: { padding: '30px 26px 48px', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '16px', textAlign: 'center' } }, out.kicker),
+      out.hasQuestion ? e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', lineHeight: 1.85, color: '#9a948b', margin: '0 0 28px', textAlign: 'center', padding: '0 8px' } }, '「' + out.question + '」') : null,
+      e('div', { style: { marginBottom: '30px' } }, out.resultTriple),
+      e('div', { style: { height: '1px', background: '#f1efe9', margin: '8px 2px 26px' } }),
+      e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '19px', color: '#2b2823', margin: '0 0 16px', letterSpacing: '0.03em' } }, '考え方・捉え方'),
+      para(out.para1, 'p1'), para(out.para2, 'p2'), para(out.transitionText, 'pt'),
+      e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.closing),
+      // AI area
+      out.isPresentFocus ? e('div', { style: { marginTop: '30px', border: '1px solid #e7e9f0', borderRadius: '20px', padding: '22px 20px', background: '#fafbfd' } },
+        e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' } },
+          e('div', { style: { display: 'flex', alignItems: 'center', gap: '9px' } },
+            e('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: '#2f3a6e', display: 'inline-block' } }),
+            e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.04em' } }, 'AI による読み解き')
+          ),
+          e('span', { style: { fontSize: '10.5px', letterSpacing: '0.1em', color: '#9aa0b8' } }, out.aiChip)
+        ),
+        out.aiRevealed ? e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#3c4356', margin: 0, textWrap: 'pretty', animation: 'kz-fade .8s ease both' } }, out.aiText) : null,
+        out.aiButton ? e(React.Fragment, null,
+          e('button', { onClick: this.requestAI, className: 'kz-ai', style: { width: '100%', padding: '14px', border: '1px solid #2f3a6e', borderRadius: '14px', background: '#ffffff', color: '#2f3a6e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', fontWeight: 500, letterSpacing: '0.1em', cursor: 'pointer' } }, 'この見立てを、AI に読み解いてもらう'),
+          e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#aab0c4', margin: '12px 0 0', textAlign: 'center' } }, '無料プランは一日にひとつ。今日のぶんが、ここにあります。')
+        ) : null
+      ) : null,
+      out.showFocusNote ? e('p', { style: { marginTop: '28px', fontSize: '12.5px', lineHeight: 1.9, color: '#aab0c4', textAlign: 'center', padding: '0 14px' } }, 'AI の読み解きは「今回の卦」に添えています。中央へ戻すと、ここに表示されます。') : null,
+      // share actions
+      e('div', { style: { marginTop: '30px', display: 'flex', gap: '12px' } },
+        e('button', { onClick: this.shareReading, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, 'シェア'),
+        e('button', { onClick: this.saveImage, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '画像を保存')
+      ),
+      // hidden share-card used for PNG export
+      this.renderShareCard(out.present),
+      // again
+      e('div', { style: { marginTop: '34px', paddingTop: '24px', borderTop: '1px solid #f1efe9', textAlign: 'center' } },
+        e('button', { onClick: this.again, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '別の問いを立てる'),
+        e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#b6b0a6', margin: '16px 0 0' } }, '同じ問いは、一度きり。次は、別の問いを。')
+      )
+    );
+  }
+
+  // ---- menu sheet ----
+  renderMenu(out) {
+    const item = (label, sub, onClick) => e('button', { key: label, onClick, style: { display: 'block', width: '100%', textAlign: 'left', border: 'none', background: '#ffffff', borderRadius: '14px', padding: '15px 18px', marginBottom: '10px', cursor: 'pointer' } },
+      e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', color: '#2b2823', letterSpacing: '0.06em' } }, label),
+      sub ? e('div', { style: { fontSize: '11.5px', color: '#aaa49a', marginTop: '4px', letterSpacing: '0.04em' } }, sub) : null
+    );
+    return e('div', { onClick: this.closeMenu, style: { position: 'absolute', inset: 0, zIndex: 50, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
+      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 18px calc(20px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
+        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 18px' } }),
+        item('占う', 'あたらしい問いを立てる', this.again),
+        item('占い履歴', 'これまでの見立てをふり返る', () => this.go('history')),
+        item('64卦をみる', '六十四卦の辞典', () => this.go('reference')),
+        item('はじめに・免責', 'このサイトについて', () => this.go('about')),
+        e('button', { onClick: this.closeMenu, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '14px 0 4px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
+      )
+    );
+  }
+
+  // ---- about / disclaimer ----
+  renderAbout(out) {
+    const h = (t) => e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '17px', color: '#2b2823', margin: '28px 0 12px', letterSpacing: '0.04em' } }, t);
+    const p = (t, i) => e('p', { key: i, style: { fontSize: '14px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 14px', textWrap: 'pretty' } }, t);
+    return e('div', { key: 'about', style: { padding: '30px 30px 48px', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '18px' } }, 'はじめに'),
+      e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '25px', lineHeight: 1.6, color: '#2b2823', margin: '0 0 18px' } }, '兆 kizashi について'),
+      p('『兆 kizashi』は、古代中国の経典『易経』にもとづいて、いまの自分を静かに見立てるためのスマートフォン向けの占いです。', 'i1'),
+      h('易経とは'),
+      p('易経は、世界の移ろいを陰と陽の組み合わせ——六本の線からなる「卦（け）」——で表した、三千年あまり読み継がれてきた書物です。六十四の卦それぞれに、いまの状況を映す言葉が添えられています。', 'e1'),
+      h('使い方'),
+      p('① ひとつの問いを心に想います。② 三つの石を六度、心の中で投げて卦を立てます。③ 現れた卦と、その変化していく先を「見立て」として読みます。', 'u1'),
+      p('易経では、同じ問いを何度も占うことはしません。一度、静かに向き合うための作法です。', 'u2'),
+      h('免責事項'),
+      p('本サイトの占いおよび解説は、娯楽および内省のための情報提供を目的としたものです。結果は将来を保証・予言するものではありません。医療・法律・金銭・進路など重要な判断は、専門家にご相談のうえ、ご自身の責任で行ってください。', 'd1'),
+      p('本サイトの利用によって生じたいかなる損害についても、制作者は責任を負いかねます。あなたの問いに答えを出すのは、占いではなく、あなた自身です。', 'd2'),
+      p('入力した問いや占い履歴は、お使いの端末（ブラウザ）内にのみ保存され、外部のサーバーへ送信されることはありません。', 'd3'),
+      e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9', textAlign: 'center' } },
+        e('button', { onClick: this.again, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '占いに戻る')
+      )
+    );
+  }
+
+  // ---- placeholders, replaced in later phases ----
+  renderPlaceholder(kicker, msg) {
+    return e('div', { key: 'ph', style: { padding: '60px 30px', textAlign: 'center', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '18px' } }, kicker),
+      e('p', { style: { fontSize: '14px', color: '#9a948b' } }, msg)
+    );
+  }
+  // ---- history / journal ----
+  renderHistory(out) {
+    const hist = this.loadHistory();
+    const head = e(React.Fragment, null,
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '14px' } }, '占い履歴'),
+      e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '25px', lineHeight: 1.5, color: '#2b2823', margin: '0 0 20px' } }, '見立ての記録')
+    );
+    if (!hist.length) {
+      return e('div', { key: 'hist', style: { padding: '30px 28px 48px', animation: 'kz-fade-up .6s ease both' } },
+        head,
+        e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#9a948b', margin: '0 0 26px' } }, 'まだ記録がありません。ひとつ、問いを立ててみましょう。記録はこの端末の中だけに残ります。'),
+        e('button', { onClick: this.again, className: 'kz-cta', style: { width: '100%', padding: '16px', border: 'none', borderRadius: '18px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15px', fontWeight: 500, letterSpacing: '0.12em', cursor: 'pointer' } }, '占う')
+      );
+    }
+    const rows = hist.map((rec) => {
+      const mini = this.renderHexagram((rec.lines || []).map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 40, faded: true });
+      const qt = rec.question && rec.question.trim();
+      const qx = qt ? '「' + (qt.length > 18 ? qt.slice(0, 18) + '…' : qt) + '」' : '問いの記録なし';
+      return e('div', { key: rec.id, style: { display: 'flex', alignItems: 'center', gap: '8px', padding: '14px 2px', borderBottom: '1px solid #f1efe9' } },
+        e('button', { onClick: () => this.viewReading(rec), style: { display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', padding: '2px 0' } },
+          e('div', { style: { width: '44px', flex: 'none', display: 'flex', justifyContent: 'center' } }, mini),
+          e('div', { style: { minWidth: 0 } },
+            e('div', { style: { fontSize: '10.5px', color: '#b6b0a6', letterSpacing: '0.08em', marginBottom: '4px' } }, rec.date + ' · 第' + rec.present.num + '卦'),
+            e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', color: '#2b2823', letterSpacing: '0.04em' } }, rec.present.name),
+            e('div', { style: { fontSize: '12px', color: '#9a948b', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, qx)
+          )
+        ),
+        e('button', { onClick: () => this.deleteReading(rec.id), 'aria-label': 'この記録を削除', style: { flex: 'none', border: 'none', background: 'none', color: '#cfcabf', fontSize: '18px', lineHeight: 1, padding: '8px', cursor: 'pointer' } }, '×')
+      );
+    });
+    return e('div', { key: 'hist', style: { padding: '30px 26px 48px', animation: 'kz-fade-up .6s ease both' } },
+      head,
+      e('div', null, rows),
+      e('div', { style: { marginTop: '26px', textAlign: 'center' } },
+        e('button', { onClick: this.clearHistory, style: { border: 'none', background: 'none', color: '#b6b0a6', fontSize: '12.5px', letterSpacing: '0.1em', cursor: 'pointer', padding: '6px' } }, '履歴をすべて消す')
+      )
+    );
+  }
+
+  // ---- reference: browsable 64 hexagrams ----
+  renderReference(out) {
+    const q = (this.state.refQuery || '').trim();
+    const items = [];
+    for (let n = 1; n <= 64; n++) {
+      const h = this.hexContent(n);
+      if (q) {
+        const hay = `${n} 第${n}卦 ${h.name || ''} ${h.reading || ''} ${(h.keywords || []).join(' ')}`;
+        if (hay.indexOf(q) === -1) continue;
+      }
+      items.push(n);
+    }
+    const cell = (n) => {
+      const h = this.hexContent(n);
+      const hexEl = this.renderHexagram((LINES_FOR[n] || []).map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 46 });
+      return e('button', { key: n, onClick: () => this.go('detail', { detailNum: n }), style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', border: '1px solid #efece6', borderRadius: '16px', background: '#fcfbf9', padding: '16px 8px 14px', cursor: 'pointer' } },
+        e('div', { style: { minHeight: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, hexEl),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14px', color: '#2b2823', marginTop: '12px', letterSpacing: '0.04em' } }, h.name),
+        e('div', { style: { fontSize: '10px', color: '#c3bdb2', marginTop: '4px', letterSpacing: '0.08em' } }, '第' + n + '卦')
+      );
+    };
+    return e('div', { key: 'ref', style: { padding: '24px 22px 48px', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '14px' } }, '64卦をみる'),
+      e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '25px', lineHeight: 1.5, color: '#2b2823', margin: '0 0 18px' } }, '六十四卦'),
+      e('input', { className: 'kz-ta', value: this.state.refQuery, onChange: this.setRefQuery, placeholder: '卦名・キーワードでさがす', style: { width: '100%', border: '1px solid #ece9e3', borderRadius: '14px', padding: '12px 15px', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', color: '#2b2823', background: '#fcfbf9', outline: 'none', marginBottom: '20px' } }),
+      items.length ? e('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } }, items.map(cell))
+                   : e('p', { style: { fontSize: '13.5px', color: '#9a948b', textAlign: 'center', padding: '30px 0' } }, '「' + q + '」に該当する卦は見つかりませんでした。')
+    );
+  }
+
+  // ---- detail: a single hexagram ----
+  renderDetail(out) {
+    const n = out.detailNum;
+    const h = this.hexContent(n);
+    const lines = LINES_FOR[n] || [0,0,0,0,0,0];
+    const hx = this.hexFromLines(lines);
+    const hexEl = this.renderHexagram(lines.map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 104 });
+    const chip = (t) => e('span', { key: t, style: { fontSize: '11.5px', color: '#5a6184', background: '#eef0f6', borderRadius: '999px', padding: '5px 12px', letterSpacing: '0.06em' } }, t);
+    const tri = (label, t) => e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px' } },
+      e('span', { style: { fontSize: '10.5px', color: '#aaa49a', letterSpacing: '0.14em', width: '38px', flex: 'none' } }, label),
+      e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823' } }, t.k + '（' + t.e + '）'),
+      e('span', { style: { fontSize: '12px', color: '#9a948b' } }, t.gloss)
+    );
+    return e('div', { key: 'detail-' + n, style: { padding: '24px 28px 48px', animation: 'kz-fade-up .6s ease both' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '8px', textAlign: 'center' } }, '第' + n + '卦'),
+      e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
+      e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '26px', color: '#2b2823', margin: '16px 0 4px', textAlign: 'center', letterSpacing: '0.05em' } }, h.name),
+      h.reading ? e('div', { style: { fontSize: '12px', color: '#b6b0a6', textAlign: 'center', letterSpacing: '0.14em', marginBottom: '16px' } }, h.reading) : null,
+      e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '24px' } }, (h.keywords || []).map(chip)),
+      h.judgment ? e('div', { style: { background: '#faf9f6', border: '1px solid #f1efe9', borderRadius: '16px', padding: '16px 18px', marginBottom: '20px' } },
+        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '8px' } }, '卦辞'),
+        e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15.5px', lineHeight: 1.9, color: '#3a352e', margin: 0 } }, h.judgment)
+      ) : null,
+      h.summary ? e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 22px', textWrap: 'pretty' } }, h.summary) : null,
+      e('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0', borderTop: '1px solid #f1efe9', borderBottom: '1px solid #f1efe9', marginBottom: '22px' } },
+        tri('上卦', hx.upper),
+        tri('下卦', hx.lower),
+        h.image ? e('div', { style: { fontSize: '12.5px', color: '#9a948b', marginTop: '4px', letterSpacing: '0.04em' } }, '象 — ' + h.image) : null
+      ),
+      h.advice ? e(React.Fragment, null,
+        e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 12px', letterSpacing: '0.03em' } }, '読み方・心がけ'),
+        e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: 0, textWrap: 'pretty' } }, h.advice)
+      ) : null,
+      e('div', { style: { marginTop: '32px', paddingTop: '22px', borderTop: '1px solid #f1efe9', display: 'flex', gap: '12px', justifyContent: 'center' } },
+        e('button', { onClick: () => this.go('reference'), className: 'kz-ghost', style: { padding: '13px 26px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '一覧へ'),
+        e('button', { onClick: this.again, className: 'kz-cta', style: { padding: '13px 26px', border: 'none', borderRadius: '16px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', fontWeight: 500, letterSpacing: '0.08em', cursor: 'pointer' } }, '占う')
+      )
+    );
+  }
+
+  render() {
+    const out = this.renderVals();
+    const header = e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'calc(22px + env(safe-area-inset-top)) 22px 14px', flex: 'none' } },
+      e('div', { style: { width: '40px', display: 'flex', alignItems: 'center' } },
+        out.notAsk ? e('button', { onClick: this.onBack, 'aria-label': 'もどる', style: { border: 'none', background: 'none', padding: '6px', margin: '-6px', cursor: 'pointer', color: '#9a948b', fontSize: '20px', lineHeight: 1 } }, '←') : null
+      ),
+      e('div', { onClick: this.again, style: { display: 'flex', alignItems: 'baseline', gap: '8px', cursor: 'pointer' } },
+        e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '21px', color: '#2b2823', letterSpacing: '0.08em' } }, '兆'),
+        e('span', { style: { fontSize: '10px', letterSpacing: '0.32em', color: '#b6b0a6', textTransform: 'uppercase' } }, 'kizashi')
+      ),
+      e('div', { style: { width: '40px', display: 'flex', justifyContent: 'flex-end' } },
+        e('button', { onClick: this.toggleMenu, 'aria-label': 'メニュー', 'aria-expanded': out.menuOpen, style: { border: 'none', background: 'none', padding: '6px', margin: '-6px', cursor: 'pointer', color: '#9a948b', fontSize: '19px', lineHeight: 1 } }, '☰')
+      )
+    );
+
+    let body = null;
+    if (out.isAsk) body = this.renderAsk(out);
+    else if (out.isCast) body = this.renderCast(out);
+    else if (out.isResult) body = this.renderResult(out);
+    else if (out.isAbout) body = this.renderAbout(out);
+    else if (out.isHistory) body = this.renderHistory(out);
+    else if (out.isReference) body = this.renderReference(out);
+    else if (out.isDetail) body = this.renderDetail(out);
+
+    const scroll = e('div', { className: 'kz-scroll', style: { paddingBottom: 'env(safe-area-inset-bottom)' } }, body);
+
+    const toast = out.toast ? e('div', { style: { position: 'absolute', left: '50%', bottom: 'calc(28px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 60, background: 'rgba(43,40,35,0.92)', color: '#fff', fontSize: '13px', letterSpacing: '0.08em', padding: '11px 20px', borderRadius: '999px', animation: 'kz-fade .25s ease both', whiteSpace: 'nowrap' } }, out.toast) : null;
+
+    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, toast));
+  }
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(e(App));
+</script>
+</body>
+</html>

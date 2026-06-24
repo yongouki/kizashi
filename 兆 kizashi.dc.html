@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho:wght@400;500;600&family=Zen+Kaku+Gothic+New:wght@300;400;500;700&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; }
+  @keyframes kz-fade-up { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes kz-fade { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes kz-ripple { from { opacity: .5; transform: translate(-50%,-50%) scale(.4); } to { opacity: 0; transform: translate(-50%,-50%) scale(2.4); } }
+  @keyframes kz-line-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .kz-scroll::-webkit-scrollbar { width: 0; height: 0; }
+</style>
+</helmet>
+<div style="min-height: 100vh; width: 100%; display: flex; align-items: center; justify-content: center; background: #e6e3dd; padding: 24px; font-family: 'Zen Kaku Gothic New', sans-serif;">
+  <div style="position: relative; width: 408px; height: 858px; max-height: calc(100vh - 48px); background: #ffffff; border-radius: 46px; box-shadow: 0 30px 70px rgba(50,44,36,0.20), 0 4px 14px rgba(50,44,36,0.08); overflow: hidden; display: flex; flex-direction: column;">
+
+    <div style="display: flex; align-items: center; justify-content: space-between; padding: 22px 26px 14px; flex: none;">
+      <div style="width: 40px; display: flex; align-items: center;">
+        <sc-if value="{{ notAsk }}" hint-placeholder-val="{{ false }}">
+          <button onClick="{{ goBack }}" style="border: none; background: none; padding: 6px; margin: -6px; cursor: pointer; color: #9a948b; font-size: 20px; line-height: 1;">←</button>
+        </sc-if>
+      </div>
+      <div style="display: flex; align-items: baseline; gap: 8px;">
+        <span style="font-family: 'Shippori Mincho', serif; font-size: 21px; color: #2b2823; letter-spacing: 0.08em;">兆</span>
+        <span style="font-size: 10px; letter-spacing: 0.32em; color: #b6b0a6; text-transform: uppercase;">kizashi</span>
+      </div>
+      <div style="width: 40px;"></div>
+    </div>
+
+    <div class="kz-scroll" style="flex: 1; overflow-y: auto; overflow-x: hidden;">
+
+      <!-- ===================== ASK ===================== -->
+      <sc-if value="{{ isAsk }}" hint-placeholder-val="{{ true }}">
+        <div style="padding: 38px 30px 44px; animation: kz-fade-up .6s ease both;">
+          <div style="font-size: 11px; letter-spacing: 0.3em; color: #2f3a6e; text-transform: uppercase; margin-bottom: 22px;">問いを立てる</div>
+          <h1 style="font-family: 'Shippori Mincho', serif; font-weight: 500; font-size: 29px; line-height: 1.62; color: #2b2823; margin: 0 0 18px; letter-spacing: 0.01em;">ひとつの問いを、<br>心に想ってください。</h1>
+          <p style="font-size: 14.5px; line-height: 1.95; color: #8c867d; margin: 0 0 34px; text-wrap: pretty;">答えを急がなくていい。いま、気にかかっていることを、ただ一つだけ。形にならなくても、胸のうちにあれば十分です。</p>
+
+          <label style="display: block; font-size: 12px; letter-spacing: 0.12em; color: #aaa49a; margin-bottom: 10px;">書きとめておく（任意）</label>
+          <textarea value="{{ question }}" onChange="{{ setQuestion }}" placeholder="たとえば「この仕事を続けるべきか迷っている」" style="width: 100%; min-height: 116px; border: 1px solid #ece9e3; border-radius: 18px; padding: 16px 17px; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14.5px; line-height: 1.8; color: #2b2823; background: #fcfbf9; resize: none; outline: none;" style-focus="border-color: #2f3a6e; background: #ffffff;"></textarea>
+
+          <button onClick="{{ startCast }}" style="width: 100%; margin-top: 26px; padding: 17px; border: none; border-radius: 18px; background: #2f3a6e; color: #ffffff; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15.5px; font-weight: 500; letter-spacing: 0.12em; cursor: pointer;" style-active="opacity: .88;">卦を立てる</button>
+
+          <div style="margin-top: 30px; padding-top: 22px; border-top: 1px solid #f1efe9; display: flex; gap: 12px;">
+            <span style="font-family: 'Shippori Mincho', serif; color: #cfcabf; font-size: 16px; flex: none; line-height: 1.4;">作法</span>
+            <p style="font-size: 12.5px; line-height: 1.9; color: #aaa49a; margin: 0;">易経では、同じ問いを何度もは占いません。一度、静かに向き合うための作法です。</p>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===================== CAST ===================== -->
+      <sc-if value="{{ isCast }}" hint-placeholder-val="{{ false }}">
+        <div style="padding: 30px 30px 40px; animation: kz-fade-up .6s ease both; display: flex; flex-direction: column; align-items: center;">
+          <div style="width: 100%; display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px;">
+            <div style="font-size: 11px; letter-spacing: 0.3em; color: #2f3a6e; text-transform: uppercase;">卦を立てる</div>
+            <div style="font-family: 'Shippori Mincho', serif; font-size: 14px; color: #b6b0a6; letter-spacing: 0.1em;">{{ counter }}</div>
+          </div>
+          <h2 style="font-family: 'Shippori Mincho', serif; font-weight: 500; font-size: 22px; line-height: 1.6; color: #2b2823; margin: 14px 0 8px; text-align: center;">三つの石を、六度。</h2>
+          <p style="font-size: 13.5px; line-height: 1.9; color: #8c867d; margin: 0 0 26px; text-align: center; max-width: 270px;">想いながら、石にふれてください。ふれるたび、線がひとつ積もります。</p>
+
+          <div style="min-height: 188px; display: flex; align-items: flex-end; justify-content: center; margin-bottom: 30px;">{{ buildingHex }}</div>
+
+          <div onClick="{{ toss }}" style="position: relative; display: flex; gap: 18px; align-items: center; justify-content: center; padding: 18px 8px; cursor: pointer; perspective: 700px; touch-action: manipulation;">
+            <sc-for list="{{ stones }}" as="s" hint-placeholder-count="3">
+              <div style="{{ s.style }}"></div>
+            </sc-for>
+            {{ ripple }}
+          </div>
+
+          <div style="height: 22px; margin-top: 4px;">
+            <sc-if value="{{ showTapHint }}" hint-placeholder-val="{{ true }}">
+              <p style="font-size: 12px; color: #c3bdb2; letter-spacing: 0.14em; margin: 0; animation: kz-fade .8s ease both;">石にふれる</p>
+            </sc-if>
+          </div>
+
+          <div style="height: 64px; margin-top: 16px; display: flex; align-items: center;">
+            <sc-if value="{{ castDone }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ goResult }}" style="padding: 15px 44px; border: none; border-radius: 16px; background: #2f3a6e; color: #ffffff; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 15px; font-weight: 500; letter-spacing: 0.14em; cursor: pointer; animation: kz-fade-up .7s ease both;" style-active="opacity: .88;">結果を見る</button>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===================== RESULT ===================== -->
+      <sc-if value="{{ isResult }}" hint-placeholder-val="{{ false }}">
+        <div style="padding: 30px 26px 48px; animation: kz-fade-up .6s ease both;">
+          <div style="font-size: 11px; letter-spacing: 0.3em; color: #2f3a6e; text-transform: uppercase; margin-bottom: 16px; text-align: center;">{{ kicker }}</div>
+
+          <sc-if value="{{ hasQuestion }}" hint-placeholder-val="{{ false }}">
+            <p style="font-family: 'Shippori Mincho', serif; font-size: 15px; line-height: 1.85; color: #9a948b; margin: 0 0 28px; text-align: center; padding: 0 8px;">「{{ question }}」</p>
+          </sc-if>
+
+          <div style="margin-bottom: 30px;">{{ resultTriple }}</div>
+
+          <div style="height: 1px; background: #f1efe9; margin: 8px 2px 26px;"></div>
+
+          <h3 style="font-family: 'Shippori Mincho', serif; font-weight: 500; font-size: 19px; color: #2b2823; margin: 0 0 16px; letter-spacing: 0.03em;">考え方・捉え方</h3>
+          <p style="font-size: 14.5px; line-height: 2.0; color: #4a4640; margin: 0 0 16px; text-wrap: pretty;">{{ para1 }}</p>
+          <p style="font-size: 14.5px; line-height: 2.0; color: #4a4640; margin: 0 0 16px; text-wrap: pretty;">{{ para2 }}</p>
+          <p style="font-size: 14.5px; line-height: 2.0; color: #4a4640; margin: 0 0 16px; text-wrap: pretty;">{{ transitionText }}</p>
+          <p style="font-size: 13.5px; line-height: 1.95; color: #9a948b; margin: 0; text-wrap: pretty;">{{ closing }}</p>
+
+          <!-- AI area -->
+          <sc-if value="{{ isPresentFocus }}" hint-placeholder-val="{{ true }}">
+          <div style="margin-top: 30px; border: 1px solid #e7e9f0; border-radius: 20px; padding: 22px 20px; background: #fafbfd;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+              <div style="display: flex; align-items: center; gap: 9px;">
+                <span style="width: 7px; height: 7px; border-radius: 50%; background: #2f3a6e; display: inline-block;"></span>
+                <span style="font-family: 'Shippori Mincho', serif; font-size: 15px; color: #2b2823; letter-spacing: 0.04em;">AI による読み解き</span>
+              </div>
+              <span style="font-size: 10.5px; letter-spacing: 0.1em; color: #9aa0b8;">{{ aiChip }}</span>
+            </div>
+
+            <sc-if value="{{ aiRevealed }}" hint-placeholder-val="{{ false }}">
+              <p style="font-size: 14px; line-height: 2.0; color: #3c4356; margin: 0; text-wrap: pretty; animation: kz-fade .8s ease both;">{{ aiText }}</p>
+            </sc-if>
+            <sc-if value="{{ aiButton }}" hint-placeholder-val="{{ true }}">
+              <button onClick="{{ requestAI }}" style="width: 100%; padding: 14px; border: 1px solid #2f3a6e; border-radius: 14px; background: #ffffff; color: #2f3a6e; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; font-weight: 500; letter-spacing: 0.1em; cursor: pointer;" style-active="background: #f3f4f8;">この見立てを、AI に読み解いてもらう</button>
+              <p style="font-size: 11.5px; line-height: 1.7; color: #aab0c4; margin: 12px 0 0; text-align: center;">無料プランは一日にひとつ。今日のぶんが、ここにあります。</p>
+            </sc-if>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ showFocusNote }}" hint-placeholder-val="{{ false }}">
+          <p style="margin-top: 28px; font-size: 12.5px; line-height: 1.9; color: #aab0c4; text-align: center; padding: 0 14px;">AI の読み解きは「今回の卦」に添えています。中央へ戻すと、ここに表示されます。</p>
+          </sc-if>
+
+          <!-- again -->
+          <div style="margin-top: 34px; padding-top: 24px; border-top: 1px solid #f1efe9; text-align: center;">
+            <button onClick="{{ again }}" style="padding: 14px 36px; border: 1px solid #e3e0d9; border-radius: 16px; background: #ffffff; color: #6b665e; font-family: 'Zen Kaku Gothic New', sans-serif; font-size: 14px; letter-spacing: 0.1em; cursor: pointer;" style-active="background: #faf9f7;">別の問いを立てる</button>
+            <p style="font-size: 12px; line-height: 1.85; color: #b6b0a6; margin: 16px 0 0;">同じ問いは、一度きり。次は、別の問いを。</p>
+          </div>
+        </div>
+      </sc-if>
+
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{
+  &quot;$preview&quot;: { &quot;width&quot;: 456, &quot;height&quot;: 906 },
+  &quot;hexagramStyle&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;bars&quot;, &quot;blocks&quot;, &quot;thread&quot;], &quot;default&quot;: &quot;bars&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;coinStyle&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;settle&quot;, &quot;lift&quot;, &quot;ripple&quot;], &quot;default&quot;: &quot;settle&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;resultLayout&quot;: { &quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;triptych&quot;, &quot;rail&quot;, &quot;focus&quot;], &quot;default&quot;: &quot;triptych&quot;, &quot;tsType&quot;: &quot;string&quot; },
+  &quot;accent&quot;: { &quot;editor&quot;: &quot;color&quot;, &quot;default&quot;: &quot;#2f3a6e&quot;, &quot;tsType&quot;: &quot;string&quot; }
+}">
+class Component extends DCLogic {
+  state = {
+    screen: 'ask',
+    question: '',
+    casts: [],
+    rot: [0, 0, 0],
+    rotZ: [0, 0, 0],
+    tossing: false,
+    tossSeq: 0,
+    everTossed: false,
+    aiRevealed: false,
+    pastLines: null,
+    focusIndex: 1,
+    dragDX: 0,
+    dragging: false,
+  };
+
+  onDragStart = (e) => { this._sx = e.clientX; this.setState({ dragging: true, dragDX: 0 }); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} };
+  onDragMove = (e) => {
+    if (!this.state.dragging) return;
+    let dx = e.clientX - this._sx;
+    const fi = this.state.focusIndex;
+    if ((fi === 0 && dx > 0) || (fi === 2 && dx < 0)) dx *= 0.35;
+    dx = Math.max(-240, Math.min(240, dx));
+    this.setState({ dragDX: dx });
+  };
+  onDragEnd = () => {
+    if (!this.state.dragging) return;
+    const dx = this.state.dragDX;
+    let fi = this.state.focusIndex;
+    if (dx < -45 && fi < 2) fi++;
+    else if (dx > 45 && fi > 0) fi--;
+    this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
+  };
+  setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min(2, i)) });
+
+  // ---- I Ching data ----
+  TRI = [
+    { bits: [1,1,1], k: '乾', e: '天', gloss: '創造と前進の力', verb: '天のようにはたらきかけ' },
+    { bits: [1,1,0], k: '兌', e: '澤', gloss: 'よろこびと交わり', verb: '澤のようにひらいて受けとり' },
+    { bits: [1,0,1], k: '離', e: '火', gloss: '明るさと知性', verb: '火のように照らして見きわめ' },
+    { bits: [1,0,0], k: '震', e: '雷', gloss: '始まりと、震わす動き', verb: '雷のように踏み出し' },
+    { bits: [0,1,1], k: '巽', e: '風', gloss: '浸透としなやかさ', verb: '風のようにじわり届かせ' },
+    { bits: [0,1,0], k: '坎', e: '水', gloss: '試練と深まり', verb: '水のように低きへ流れ' },
+    { bits: [0,0,1], k: '艮', e: '山', gloss: '静止と、たくわえ', verb: '山のようにいったん止まり' },
+    { bits: [0,0,0], k: '坤', e: '地', gloss: '受容と育み', verb: '地のように受けとめ' },
+  ];
+  // KW[lowerIdx][upperIdx], trigram order 乾兌離震巽坎艮坤
+  KW = [
+    [1,43,14,34,9,5,26,11],
+    [10,58,38,54,61,60,41,19],
+    [13,49,30,55,37,63,22,36],
+    [25,17,21,51,42,3,27,24],
+    [44,28,50,32,57,48,18,46],
+    [6,47,64,40,59,29,4,7],
+    [33,31,56,62,53,39,52,15],
+    [12,45,35,16,20,8,23,2],
+  ];
+  NAMES = [null,'乾為天','坤為地','水雷屯','山水蒙','水天需','天水訟','地水師','水地比','風天小畜','天澤履','地天泰','天地否','天火同人','火天大有','地山謙','雷地豫','澤雷随','山風蠱','地澤臨','風地観','火雷噬嗑','山火賁','山地剝','地雷復','天雷无妄','山天大畜','山雷頤','澤風大過','坎為水','離為火','澤山咸','雷風恒','天山遯','雷天大壮','火地晋','地火明夷','風火家人','火澤睽','水山蹇','雷水解','山澤損','風雷益','澤天夬','天風姤','澤地萃','地風升','澤水困','水風井','澤火革','火風鼎','震為雷','艮為山','風山漸','雷澤帰妹','雷火豊','火山旅','巽為風','兌為澤','風水渙','水澤節','風澤中孚','雷山小過','水火既済','火水未済'];
+
+  triIdx(bits) {
+    for (let i = 0; i < 8; i++) {
+      const t = this.TRI[i].bits;
+      if (t[0] === bits[0] && t[1] === bits[1] && t[2] === bits[2]) return i;
+    }
+    return 0;
+  }
+  hexFromLines(vals) {
+    const lo = this.triIdx(vals.slice(0, 3));
+    const up = this.triIdx(vals.slice(3, 6));
+    const num = this.KW[lo][up];
+    return { num, name: this.NAMES[num], lower: this.TRI[lo], upper: this.TRI[up], lines: vals.slice() };
+  }
+  hexToRgba(hex, a) {
+    const h = hex.replace('#', '');
+    const r = parseInt(h.substring(0, 2), 16), g = parseInt(h.substring(2, 4), 16), b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
+  accent() { return this.props.accent || '#2f3a6e'; }
+
+  componentDidMount() {
+    try {
+      if (!localStorage.getItem('kz_prev')) {
+        const seed = this.hexFromLines([0,0,1,0,0,0]); // 地山謙
+        localStorage.setItem('kz_prev', JSON.stringify({ lines: seed.lines, num: seed.num, name: seed.name }));
+      }
+    } catch (e) {}
+  }
+
+  // ---- actions ----
+  setQuestion = (e) => this.setState({ question: e.target.value });
+
+  startCast = () => this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false });
+
+  toss = () => {
+    if (this.state.tossing || this.state.casts.length >= 6) return;
+    const style = this.props.coinStyle || 'settle';
+    const newRot = this.state.rot.slice();
+    const newRotZ = this.state.rotZ.slice();
+    let y = 0;
+    for (let i = 0; i < 3; i++) {
+      const bit = Math.random() < 0.5 ? 1 : 0;
+      y += bit;
+      const baseSpin = style === 'ripple' ? 180 : 720;
+      newRot[i] += baseSpin + Math.floor(Math.random() * 4) * 180;
+      if (style === 'lift') newRotZ[i] += (Math.random() < 0.5 ? -1 : 1) * (160 + Math.floor(Math.random() * 3) * 360);
+    }
+    const value = (y % 2 === 1) ? 1 : 0;
+    const changing = (y === 0 || y === 3);
+    this.setState({ rot: newRot, rotZ: newRotZ, tossing: true, everTossed: true, tossSeq: this.state.tossSeq + 1 });
+    const dur = style === 'lift' ? 1100 : (style === 'ripple' ? 760 : 900);
+    setTimeout(() => {
+      this.setState((s) => ({ casts: s.casts.concat([{ value, changing }]), tossing: false }));
+    }, dur + 160);
+  };
+
+  goResult = () => {
+    if (this.state.casts.length < 6) return;
+    let used = false;
+    let pastLines = null;
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      used = localStorage.getItem('kz_ai_date') === today;
+      const raw = localStorage.getItem('kz_prev');
+      if (raw) { const p = JSON.parse(raw); if (p && p.lines) pastLines = p.lines; }
+    } catch (e) {}
+    this.setState({ screen: 'result', aiRevealed: used, pastLines, focusIndex: 1, dragDX: 0, dragging: false });
+    // persist this reading as next time's "previous" (after capturing the prior one above)
+    try {
+      const present = this.hexFromLines(this.state.casts.map(c => c.value));
+      localStorage.setItem('kz_prev', JSON.stringify({ lines: present.lines, num: present.num, name: present.name }));
+    } catch (e) {}
+  };
+
+  again = () => this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, focusIndex: 1, dragDX: 0, dragging: false });
+
+  goBack = () => this.setState({ screen: 'ask' });
+
+  requestAI = () => {
+    try {
+      const today = new Date().toISOString().slice(0, 10);
+      localStorage.setItem('kz_ai_date', today);
+    } catch (e) {}
+    this.setState({ aiRevealed: true });
+  };
+
+  // ---- hexagram rendering ----
+  renderHexagram(lines, opts) {
+    const e = React.createElement;
+    const accent = this.accent();
+    const style = opts.style || 'bars';
+    const w = opts.w;
+    const faded = !!opts.faded;
+    const showChanging = !!opts.showChanging;
+    const f = w / 104;
+    let barH, gap, radius, yinGap;
+    if (style === 'blocks') { barH = 20 * f; gap = 8 * f; radius = 6 * f; yinGap = 14 * f; }
+    else if (style === 'thread') { barH = Math.max(2.5, 3 * f); gap = 17 * f; radius = 2; yinGap = 22 * f; }
+    else { barH = 13 * f; gap = 11 * f; radius = 999; yinGap = 18 * f; }
+    const col = faded ? this.hexToRgba(accent, 0.32) : accent;
+    const blockBg = faded ? this.hexToRgba(accent, 0.13) : this.hexToRgba(accent, 0.9);
+    const fill = style === 'blocks' ? blockBg : col;
+    const rows = lines.slice().reverse();
+    return e('div', { style: { display: 'flex', flexDirection: 'column', gap: gap + 'px', width: w + 'px' } },
+      rows.map((ln, i) => {
+        if (ln == null) {
+          return e('div', { key: i, style: { height: barH + 'px', width: '100%', borderRadius: radius + 'px', background: this.hexToRgba(accent, 0.06) } });
+        }
+        const seg = (extra) => Object.assign({ height: barH + 'px', borderRadius: radius + 'px', background: fill }, extra);
+        let bar;
+        if (ln.v === 1) {
+          bar = e('div', { style: seg({ width: '100%' }) });
+        } else {
+          const sw = `calc((100% - ${yinGap}px) / 2)`;
+          bar = e('div', { style: { display: 'flex', width: '100%', height: barH + 'px', animation: opts.animate ? 'kz-line-in .5s ease both' : 'none' } },
+            e('div', { style: seg({ width: sw }) }),
+            e('div', { style: { width: yinGap + 'px' } }),
+            e('div', { style: seg({ width: sw }) }));
+        }
+        const inner = e('div', { style: { width: '100%', animation: opts.animate ? 'kz-line-in .5s ease both' : 'none' } }, bar);
+        if (showChanging && ln.changing) {
+          const ms = Math.max(10, barH * 1.5);
+          const ring = e('div', { key: 'r', style: { position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%,-50%)', width: ms + 'px', height: ms + 'px', borderRadius: '50%', border: `2px solid ${accent}`, background: '#ffffff', boxSizing: 'border-box' } });
+          return e('div', { key: i, style: { position: 'relative', display: 'flex', alignItems: 'center' } }, inner, ring);
+        }
+        return inner;
+      })
+    );
+  }
+
+  hexCard(label, hex, main, hstyle) {
+    const e = React.createElement;
+    const mincho = "'Shippori Mincho', serif";
+    const w = main ? 104 : 58;
+    const hexEl = this.renderHexagram(
+      hex.lines.map((v, i) => ({ v, changing: main && this.changing && this.changing[i] })),
+      { style: hstyle, w, faded: !main, showChanging: main }
+    );
+    return e('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', flex: 'none', opacity: main ? 1 : 0.62 } },
+      e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: main ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, label),
+      e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: main ? '150px' : '92px' } }, hexEl),
+      e('div', { style: { fontFamily: mincho, fontSize: main ? '20px' : '14px', color: main ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em', lineHeight: 1.4 } }, hex.name),
+      e('div', { style: { fontSize: main ? '11px' : '10px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + hex.num + '卦')
+    );
+  }
+
+  buildCarousel(cells, fi, dragDX, dragging) {
+    const e = React.createElement;
+    const accent = this.accent();
+    const layout = this.props.resultLayout || 'triptych';
+    const hstyle = this.props.hexagramStyle || 'bars';
+    const C = 200, W = 356;
+    let peekScale, peekOpacity, showLine;
+    if (layout === 'focus') { peekScale = 0.34; peekOpacity = 0; showLine = false; }
+    else if (layout === 'rail') { peekScale = 0.5; peekOpacity = 0.32; showLine = true; }
+    else { peekScale = 0.62; peekOpacity = 0.42; showLine = false; }
+    const baseX = W / 2 - (fi * C + C / 2) + (dragDX || 0);
+
+    const track = e('div', {
+      style: {
+        display: 'flex', width: (C * cells.length) + 'px',
+        transform: `translateX(${baseX}px)`,
+        transition: dragging ? 'none' : 'transform .42s cubic-bezier(.2,.7,.2,1)',
+      }
+    }, cells.map((c, i) => {
+      const focused = i === fi;
+      const hexEl = this.renderHexagram(
+        c.hex.lines.map((v, k) => ({ v, changing: c.role === 'present' && this.changing && this.changing[k] })),
+        { style: hstyle, w: 104, faded: !focused, showChanging: c.role === 'present' }
+      );
+      return e('div', {
+        key: i,
+        onClick: focused ? undefined : (() => this.setFocus(i)),
+        style: {
+          width: C + 'px', flex: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center',
+          transform: `scale(${focused ? 1 : peekScale})`,
+          opacity: focused ? 1 : peekOpacity,
+          transition: 'transform .42s cubic-bezier(.2,.7,.2,1), opacity .42s ease',
+          cursor: focused ? 'default' : 'pointer',
+        }
+      },
+        e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: focused ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, c.label),
+        e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '20px', color: focused ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em' } }, c.hex.name),
+        e('div', { style: { fontSize: '11px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
+      );
+    }));
+
+    const stage = e('div', {
+      onPointerDown: this.onDragStart, onPointerMove: this.onDragMove, onPointerUp: this.onDragEnd, onPointerLeave: this.onDragEnd, onPointerCancel: this.onDragEnd,
+      style: { position: 'relative', width: '100%', overflow: 'hidden', touchAction: 'pan-y', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none' }
+    },
+      showLine ? e('div', { style: { position: 'absolute', left: 0, right: 0, top: '96px', height: '1px', background: '#ece9e3', pointerEvents: 'none' } }) : null,
+      track
+    );
+
+    const dots = e('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '12px', marginTop: '22px' } },
+      cells.map((c, i) => e('div', {
+        key: i, onClick: () => this.setFocus(i),
+        style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer' }
+      },
+        e('div', { style: { width: i === fi ? '22px' : '7px', height: '7px', borderRadius: '4px', background: i === fi ? accent : '#dcd8d0', transition: 'all .3s ease' } }),
+        e('div', { style: { fontSize: '9.5px', letterSpacing: '0.16em', color: i === fi ? '#8c867d' : '#c3bdb2' } }, c.cap)
+      ))
+    );
+
+    const hint = e('div', { style: { textAlign: 'center', marginTop: '16px', fontSize: '11px', letterSpacing: '0.16em', color: '#c8c2b7' } }, '⟵  スワイプで前後の卦へ  ⟶');
+
+    return e('div', null, stage, dots, hint);
+  }
+
+  buildInterpFor(hex, role, ctx) {
+    const p = ctx.present, f = ctx.future, cc = ctx.changingCount;
+    const lo = hex.lower, up = hex.upper;
+    if (role === 'present') {
+      const para1 = `いま現れているのは『${hex.name}』。下に${lo.e}（${lo.gloss}）、上に${up.e}（${up.gloss}）が重なっています。`;
+      const para2 = `${lo.verb}、その上で${up.verb}——そんな構えが、この問いには合っているのかもしれません。`;
+      let transitionText, closing;
+      if (cc > 0) {
+        transitionText = `${cc}つの動く線が、状況を『${f.name}』へと連れていこうとしています。${hex.name}から${f.name}へ。${f.upper.e}が示すのは、${f.upper.gloss}に向かう流れです。いまの形に、すでに次の兆しがふくまれています。`;
+        closing = '易経は「当てるもの」ではなく、見方をひとつ増やすための鏡です。どう動くかを決めるのは、あなた自身。';
+      } else {
+        transitionText = `動く線はありません。いまは形を変えず、『${hex.name}』のままに置いておくとき。焦って次へ進めるより、この状態を静かに保つことに意味があります。`;
+        closing = '易経は「当てるもの」ではなく、見方をひとつ増やすための鏡です。今日はこの一卦を、そっと胸に置いておいてください。';
+      }
+      const aiText = cc > 0
+        ? `あなたの問いを『${hex.name}』として見ると、${lo.gloss}を土台に、${up.gloss}が上に立つ形が浮かびます。いま動いている線は、${f.name}という次の景色を準備しています。急いで結論を出すより、${up.gloss}の方へ半歩だけ重心を移してみる——それだけで、見えるものが変わるはずです。変化は外から来るのではなく、すでにあなたの内側で始まっています。`
+        : `あなたの問いを『${hex.name}』として見ると、${lo.gloss}と${up.gloss}が静かに釣り合っています。動く線がないのは、いまが「整えるとき」だという合図。新しい一手より、足元をていねいに保つこと。その落ち着きが、次の問いに進むための土台になります。`;
+      return { para1, para2, transitionText, closing, aiText };
+    }
+    if (role === 'past') {
+      return {
+        para1: `前回、あなたに現れていたのは『${hex.name}』。下に${lo.e}（${lo.gloss}）、上に${up.e}（${up.gloss}）という形でした。`,
+        para2: `${lo.verb}、${up.verb}——そんな時期を、あなたは通ってきました。`,
+        transitionText: `過去は変えられませんが、読み直すことはできます。『${hex.name}』のころに見えていたものが、いまの『${p.name}』の背景になっています。`,
+        closing: '前回の卦は、いまを映す鏡のひとつ。重ねて見ると、流れがほのかに見えてきます。',
+        aiText: '',
+      };
+    }
+    return {
+      para1: `次に進もうとしているのは『${hex.name}』。下に${lo.e}（${lo.gloss}）、上に${up.e}（${up.gloss}）が重なります。`,
+      para2: `${lo.verb}、その上で${up.verb}——そんな景色へ、いまの問いはひらかれようとしています。`,
+      transitionText: cc > 0
+        ? `『${p.name}』の動く線が、この『${hex.name}』を呼んでいます。まだ確定した未来ではなく、いまの構えがつくる「ありうる次」です。`
+        : `いまは動く線がないため、当面は『${p.name}』のまま。もし次へ進むとすれば、『${hex.name}』のような形が考えられます。`,
+      closing: `未来は決まっていません。『${hex.name}』は、向かいうる方向のひとつ。選ぶのは、あなたです。`,
+      aiText: '',
+    };
+  }
+
+  renderVals() {
+    const s = this.state;
+    const accent = this.accent();
+    const hstyle = this.props.hexagramStyle || 'bars';
+    const coinStyle = this.props.coinStyle || 'settle';
+
+    // stones
+    const dur = coinStyle === 'lift' ? 1100 : (coinStyle === 'ripple' ? 760 : 900);
+    const ease = coinStyle === 'lift' ? 'cubic-bezier(.34,1.42,.5,1)' : (coinStyle === 'ripple' ? 'cubic-bezier(.2,.8,.2,1)' : 'cubic-bezier(.2,.72,.2,1)');
+    const stones = [0, 1, 2].map((i) => {
+      const tf = `rotateX(${s.rot[i]}deg) rotateZ(${s.rotZ[i]}deg)`;
+      const base = `width:72px;height:72px;border-radius:50%;background:#ece7df;border:1px solid rgba(150,140,125,.28);box-shadow: inset 0 3px 6px rgba(255,255,255,.75), inset 0 -5px 9px rgba(120,108,92,.18), 0 10px 20px rgba(60,50,40,.10);flex:none;`;
+      const trans = `transition: transform ${dur}ms ${ease} ${i * 70}ms;`;
+      return { style: base + trans + `transform:${tf};` };
+    });
+    const e = React.createElement;
+    const ripple = (coinStyle === 'ripple' && s.tossing)
+      ? e('div', { key: s.tossSeq, style: { position: 'absolute', left: '50%', top: '50%', width: '160px', height: '160px', borderRadius: '50%', border: `1.5px solid ${this.hexToRgba(accent, 0.6)}`, pointerEvents: 'none', animation: 'kz-ripple .9s ease-out both' } })
+      : null;
+
+    // building hexagram (cast screen): 6 slots, fill from bottom
+    const buildLines = [];
+    for (let i = 0; i < 6; i++) {
+      buildLines.push(i < s.casts.length ? { v: s.casts[i].value, changing: false } : null);
+    }
+    const buildingHex = this.renderHexagram(buildLines, { style: hstyle, w: 116, faded: false, showChanging: false, animate: true });
+
+    const out = {
+      isAsk: s.screen === 'ask',
+      isCast: s.screen === 'cast',
+      isResult: s.screen === 'result',
+      notAsk: s.screen !== 'ask',
+      question: s.question,
+      hasQuestion: s.screen === 'result' && s.question.trim().length > 0,
+      setQuestion: this.setQuestion,
+      startCast: this.startCast,
+      toss: this.toss,
+      goResult: this.goResult,
+      again: this.again,
+      goBack: this.goBack,
+      requestAI: this.requestAI,
+      stones,
+      ripple,
+      buildingHex,
+      counter: `${s.casts.length} / 6`,
+      castDone: s.casts.length >= 6,
+      showTapHint: s.screen === 'cast' && !s.everTossed,
+      // result defaults
+      resultTriple: null,
+      kicker: '今回の見立て',
+      para1: '', para2: '', transitionText: '', closing: '',
+      isPresentFocus: false, showFocusNote: false,
+      aiText: '', aiRevealed: false, aiButton: false, aiChip: '',
+    };
+
+    if (s.screen === 'result' && s.casts.length === 6) {
+      const present = this.hexFromLines(s.casts.map(c => c.value));
+      const futureLines = s.casts.map(c => c.changing ? (1 - c.value) : c.value);
+      const future = this.hexFromLines(futureLines);
+      const past = (s.pastLines && s.pastLines.length === 6) ? this.hexFromLines(s.pastLines) : present;
+      this.changing = s.casts.map(c => c.changing);
+      const changingCount = this.changing.filter(Boolean).length;
+      const ctx = { present, future, past, changingCount };
+      const cells = [
+        { role: 'past', label: '前回の卦', kicker: '前回の見立て', cap: 'これまで', hex: past, interp: this.buildInterpFor(past, 'past', ctx) },
+        { role: 'present', label: '今回の卦', kicker: '今回の見立て', cap: 'いま', hex: present, interp: this.buildInterpFor(present, 'present', ctx) },
+        { role: 'future', label: '次に進む卦', kicker: '次の見立て', cap: 'これから', hex: future, interp: this.buildInterpFor(future, 'future', ctx) },
+      ];
+      const fi = Math.max(0, Math.min(2, s.focusIndex));
+      out.resultTriple = this.buildCarousel(cells, fi, s.dragDX, s.dragging);
+      const cur = cells[fi];
+      out.kicker = cur.kicker;
+      out.para1 = cur.interp.para1;
+      out.para2 = cur.interp.para2;
+      out.transitionText = cur.interp.transitionText;
+      out.closing = cur.interp.closing;
+      out.isPresentFocus = fi === 1;
+      out.showFocusNote = fi !== 1;
+      out.aiText = cells[1].interp.aiText;
+      out.aiRevealed = s.aiRevealed;
+      out.aiButton = !s.aiRevealed;
+      out.aiChip = s.aiRevealed ? '今日のぶん · 完了' : '残り 1 / 日';
+    }
+
+    return out;
+  }
+}
+</script>
+</body>
+</html>
