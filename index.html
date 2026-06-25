@@ -80,6 +80,8 @@ const CONFIG = {
   HEX_STYLE: 'bars',       // bars | blocks | thread
   COIN_STYLE: 'settle',    // settle | lift | ripple
   RESULT_LAYOUT: 'triptych', // triptych | rail | focus
+  // AI解釈API。Renderにデプロイ後、実URLに差し替える。
+  AI_ENDPOINT: 'https://ekikyo-api.onrender.com/api/divine',
 };
 
 class App extends React.Component {
@@ -93,6 +95,9 @@ class App extends React.Component {
     tossSeq: 0,
     everTossed: false,
     aiRevealed: false,
+    aiLoading: false,
+    aiError: '',
+    aiResult: null,
     pastLines: null,
     focusIndex: 1,
     dragDX: 0,
@@ -290,7 +295,7 @@ class App extends React.Component {
 
   startCast = () => {
     this._resetAuto();
-    this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false, navStack: [], menuOpen: false, autoCasting: false });
+    this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, navStack: [], menuOpen: false, autoCasting: false });
   };
 
   toss = () => {
@@ -355,11 +360,12 @@ class App extends React.Component {
     let pastLines = null;
     const hist = this.loadHistory();
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      used = localStorage.getItem('kz_ai_date') === today;
+      used = localStorage.getItem('kz_ai_date') === this._jstDate();
     } catch (e) {}
     pastLines = (hist.length && hist[0].lines && hist[0].lines.length === 6) ? hist[0].lines : this.SEED_LINES.slice();
-    this.setState({ screen: 'result', aiRevealed: used, pastLines, focusIndex: 1, dragDX: 0, dragging: false, viewing: false });
+    // 今日すでにAIを使っていれば「完了」状態にする。解釈テキストは占いごとに固有なので、
+    // 別の占いには復元しない（aiResult は null のまま、render側で「受け取り済み」を表示）。
+    this.setState({ screen: 'result', aiRevealed: used, aiResult: null, aiError: '', aiLoading: false, pastLines, focusIndex: 1, dragDX: 0, dragging: false, viewing: false });
     // record this reading at the head of history
     try {
       const present = this.hexFromLines(this.state.casts.map(c => c.value));
@@ -381,13 +387,13 @@ class App extends React.Component {
     const casts = rec.lines.map((v, i) => ({ value: v, changing: !!(rec.changing && rec.changing[i]) }));
     this.go('result', {
       casts, question: rec.question || '', pastLines: rec.pastLines || null,
-      focusIndex: 1, dragDX: 0, dragging: false, aiRevealed: false, viewing: true,
+      focusIndex: 1, dragDX: 0, dragging: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, viewing: true,
     });
   };
   deleteReading = (id) => { this.saveHistory(this.loadHistory().filter((r) => r.id !== id)); this.forceUpdate(); };
   clearHistory = () => { this.saveHistory([]); this.forceUpdate(); };
 
-  again = () => this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, focusIndex: 1, dragDX: 0, dragging: false, navStack: [], menuOpen: false, viewing: false, glossTerm: null });
+  again = () => this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, focusIndex: 1, dragDX: 0, dragging: false, navStack: [], menuOpen: false, viewing: false, glossTerm: null });
 
   // ---- navigation (state-based router with a back stack) ----
   go = (screen, extra) => this.setState((s) => ({
@@ -409,12 +415,36 @@ class App extends React.Component {
   toggleMenu = () => this.setState((s) => ({ menuOpen: !s.menuOpen }));
   closeMenu = () => this.setState({ menuOpen: false });
 
-  requestAI = () => {
+  // フロントの日次ゲートはサーバ(Asia/Tokyo)に合わせ、JSTの日付で判定する。
+  _jstDate() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
+
+  // The AI reading seam, now wired to the real backend. `this._aiPayload` is
+  // built in renderVals (where the hexagrams are in scope). Cookie-based 1/day
+  // lives server-side; localStorage(kz_ai_date) is the practical first-party gate.
+  requestAI = async () => {
+    if (this.state.aiLoading) return;
+    this.setState({ aiLoading: true, aiError: '' });
+    const stampToday = () => { try { localStorage.setItem('kz_ai_date', this._jstDate()); } catch (e) {} };
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      localStorage.setItem('kz_ai_date', today);
-    } catch (e) {}
-    this.setState({ aiRevealed: true });
+      const r = await fetch(CONFIG.AI_ENDPOINT, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(this._aiPayload || {}),
+      });
+      if (r.status === 429) {
+        const j = await r.json().catch(() => ({}));
+        stampToday();
+        this.setState({ aiLoading: false, aiRevealed: true, aiError: j.message || '今日はもう一度、同じ問いと向き合ってみてください。明日また占えます。' });
+        return;
+      }
+      if (!r.ok) throw new Error('status ' + r.status);
+      const data = await r.json();
+      stampToday();
+      this.setState({ aiLoading: false, aiRevealed: true, aiError: '', aiResult: data });
+    } catch (e) {
+      this.setState({ aiLoading: false, aiError: '解釈の生成に失敗しました。もう一度お試しください。' });
+    }
   };
 
   // ---- share / image ----
@@ -758,10 +788,9 @@ class App extends React.Component {
     return nodes;
   }
 
-  // The AI reading seam. v1 synthesizes locally from authored HEX content + trigram
-  // glosses; to enable a real backend later, replace the body with:
-  //   const r = await fetch(CONFIG.AI_ENDPOINT, { method:'POST', body: JSON.stringify(ctx) });
-  //   return (await r.json()).text;
+  // Local synthesis, kept only as an offline fallback. The live AI reading is now
+  // produced by requestAI() (POST CONFIG.AI_ENDPOINT) and rendered as honka/shika/
+  // advice; this method is no longer wired into renderVals.
   aiStub(ctx) {
     const hex = ctx.present, f = ctx.future, cc = ctx.changingCount;
     const lo = hex.lower, up = hex.upper;
@@ -773,6 +802,15 @@ class App extends React.Component {
       return `${q}『${hex.name}』として見ると、${core} いま動いている線は、${f.name}という次の景色を準備しています。${move} 急いで結論を出すより、その一歩が、見えるものを変えていきます。変化は外から来るのではなく、すでにあなたの内側で始まっています。`;
     }
     return `${q}『${hex.name}』として見ると、${core} 動く線がないのは、いまが「整えるとき」だという合図です。${move} 新しい一手より、足元をていねいに保つこと。その落ち着きが、次の問いへ進む土台になります。`;
+  }
+
+  // One labelled section of the AI reading (本卦 / 之卦 / 捉え方).
+  renderAiPart(label, title, bodyText) {
+    if (!bodyText) return null;
+    return e('div', { key: 'aip-' + label, style: { marginBottom: '16px' } },
+      e('div', { style: { fontSize: '11px', letterSpacing: '0.18em', color: '#2f3a6e', marginBottom: '7px' } }, label + (title ? '　' + title : '')),
+      e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#3c4356', margin: 0, textWrap: 'pretty' } }, bodyText)
+    );
   }
 
   buildInterpFor(hex, role, ctx) {
@@ -907,7 +945,7 @@ class App extends React.Component {
       kicker: '今回の見立て',
       para1: '', para2: '', transitionText: '', closing: '',
       isPresentFocus: false, showFocusNote: false,
-      aiText: '', aiRevealed: false, aiButton: false, aiChip: '',
+      aiResult: null, aiLoading: false, aiError: '', aiRevealed: false, aiButton: false, aiChip: '',
       present: null,
     };
 
@@ -934,9 +972,18 @@ class App extends React.Component {
       out.closing = cur.interp.closing;
       out.isPresentFocus = fi === 1;
       out.showFocusNote = fi !== 1;
-      out.aiText = this.aiStub(ctx);
+      // AI解釈リクエストの payload を退避（requestAI が使う）。本卦/之卦は卦名＋八卦の漢字。
+      this._aiPayload = {
+        question: (s.question || '').slice(0, 200),
+        hexagram: { name: present.name, lower: present.lower.k, upper: present.upper.k },
+        changing_lines: this.changing.map((c, i) => c ? i + 1 : 0).filter(Boolean),
+        future_hexagram: changingCount > 0 ? { name: future.name, lower: future.lower.k, upper: future.upper.k } : null,
+      };
+      out.aiResult = s.aiResult;
+      out.aiLoading = s.aiLoading;
+      out.aiError = s.aiError;
       out.aiRevealed = s.aiRevealed;
-      out.aiButton = !s.aiRevealed;
+      out.aiButton = !s.aiRevealed && !s.aiLoading;
       out.aiChip = s.aiRevealed ? '今日のぶん · 完了' : '残り 1 / 日';
       out.present = present;
     }
@@ -1014,7 +1061,14 @@ class App extends React.Component {
           ),
           e('span', { style: { fontSize: '10.5px', letterSpacing: '0.1em', color: '#9aa0b8' } }, out.aiChip)
         ),
-        out.aiRevealed ? e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#3c4356', margin: 0, textWrap: 'pretty', animation: 'kz-fade .8s ease both' } }, out.aiText) : null,
+        out.aiLoading ? e('p', { key: 'ail', style: { fontSize: '13.5px', lineHeight: 1.9, color: '#9aa0b8', margin: 0, textAlign: 'center' } }, '読み解いています…') : null,
+        (out.aiError && !out.aiLoading) ? e('p', { key: 'aie', style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.aiError) : null,
+        (out.aiResult && !out.aiLoading) ? e('div', { key: 'air', style: { animation: 'kz-fade .8s ease both' } },
+          this.renderAiPart('本卦', out.aiResult.honka ? (out.aiResult.honka.name + (out.aiResult.honka.reading ? '（' + out.aiResult.honka.reading + '）' : '')) : null, out.aiResult.honka ? out.aiResult.honka.interpretation : null),
+          out.aiResult.shika ? this.renderAiPart('之卦', out.aiResult.shika.name, out.aiResult.shika.interpretation) : null,
+          out.aiResult.advice ? this.renderAiPart('捉え方', null, out.aiResult.advice) : null
+        ) : null,
+        (out.aiRevealed && !out.aiResult && !out.aiError && !out.aiLoading) ? e('p', { key: 'aidone', style: { fontSize: '13px', lineHeight: 1.9, color: '#aab0c4', margin: 0, textAlign: 'center' } }, '今日のぶんの読み解きは、もう受け取りました。また明日、別の景色を。') : null,
         out.aiButton ? e(React.Fragment, null,
           e('button', { onClick: this.requestAI, className: 'kz-ai', style: { width: '100%', padding: '14px', border: '1px solid #2f3a6e', borderRadius: '14px', background: '#ffffff', color: '#2f3a6e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', fontWeight: 500, letterSpacing: '0.1em', cursor: 'pointer' } }, 'この見立てを、AI に読み解いてもらう'),
           e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#aab0c4', margin: '12px 0 0', textAlign: 'center' } }, '無料プランは一日にひとつ。今日のぶんが、ここにあります。')
