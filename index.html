@@ -18,7 +18,13 @@
 <meta property="og:title" content="兆 kizashi — 易経で、いまを見立てる">
 <meta property="og:description" content="ひとつの問いを立て、卦を立てて、いまを静かに見立てる。易経のスマホ占い。">
 <meta property="og:type" content="website">
-<meta name="twitter:card" content="summary">
+<meta property="og:url" content="https://yongouki.github.io/kizashi/">
+<meta property="og:image" content="https://yongouki.github.io/kizashi/kizashi_x_card_simple.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="兆 kizashi — 易経で、いまを見立てる">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://yongouki.github.io/kizashi/kizashi_x_card_simple.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="兆 kizashi">
@@ -98,6 +104,7 @@ class App extends React.Component {
     aiLoading: false,
     aiError: '',
     aiResult: null,
+    aiSlow: false,
     pastLines: null,
     focusIndex: 1,
     dragDX: 0,
@@ -265,6 +272,7 @@ class App extends React.Component {
   newId() { return 'r' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
 
   componentDidMount() {
+    this._warmBackend(); // wake Render ahead of the divination so the AI reply isn't cold-started
     // migrate a legacy single kz_prev into the history array
     try {
       if (!localStorage.getItem('kz_history')) {
@@ -295,6 +303,7 @@ class App extends React.Component {
 
   startCast = () => {
     this._resetAuto();
+    this._warmBackend(); // begin warming the backend as the user starts casting
     this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, navStack: [], menuOpen: false, autoCasting: false });
   };
 
@@ -418,12 +427,27 @@ class App extends React.Component {
   // フロントの日次ゲートはサーバ(Asia/Tokyo)に合わせ、JSTの日付で判定する。
   _jstDate() { return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10); }
 
+  // Render free tier spins down after ~15min idle (cold start ~30-60s). Wake it
+  // ahead of need (page load / casting) so the wait hides behind the coin ritual.
+  _warmBackend() {
+    const now = Date.now();
+    if (this._lastWarm && now - this._lastWarm < 10 * 60 * 1000) return;
+    this._lastWarm = now;
+    try {
+      const u = (CONFIG.AI_ENDPOINT || '').replace(/\/api\/divine\/?$/, '/health');
+      if (u) fetch(u, { mode: 'no-cors', cache: 'no-store' }).catch(() => {});
+    } catch (e) {}
+  }
+
   // The AI reading seam, now wired to the real backend. `this._aiPayload` is
   // built in renderVals (where the hexagrams are in scope). Cookie-based 1/day
   // lives server-side; localStorage(kz_ai_date) is the practical first-party gate.
   requestAI = async () => {
     if (this.state.aiLoading) return;
-    this.setState({ aiLoading: true, aiError: '' });
+    this.setState({ aiLoading: true, aiError: '', aiSlow: false });
+    // if it's taking a while (cold start), reassure rather than look stuck
+    clearTimeout(this._slowT);
+    this._slowT = setTimeout(() => { if (this.state.aiLoading) this.setState({ aiSlow: true }); }, 7000);
     const stampToday = () => { try { localStorage.setItem('kz_ai_date', this._jstDate()); } catch (e) {} };
     try {
       const r = await fetch(CONFIG.AI_ENDPOINT, {
@@ -434,16 +458,19 @@ class App extends React.Component {
       });
       if (r.status === 429) {
         const j = await r.json().catch(() => ({}));
+        clearTimeout(this._slowT);
         stampToday();
-        this.setState({ aiLoading: false, aiRevealed: true, aiError: j.message || '今日はもう一度、同じ問いと向き合ってみてください。明日また占えます。' });
+        this.setState({ aiLoading: false, aiSlow: false, aiRevealed: true, aiError: j.message || '今日はもう一度、同じ問いと向き合ってみてください。明日また占えます。' });
         return;
       }
       if (!r.ok) throw new Error('status ' + r.status);
       const data = await r.json();
+      clearTimeout(this._slowT);
       stampToday();
-      this.setState({ aiLoading: false, aiRevealed: true, aiError: '', aiResult: data });
+      this.setState({ aiLoading: false, aiSlow: false, aiRevealed: true, aiError: '', aiResult: data });
     } catch (e) {
-      this.setState({ aiLoading: false, aiError: '解釈の生成に失敗しました。もう一度お試しください。' });
+      clearTimeout(this._slowT);
+      this.setState({ aiLoading: false, aiSlow: false, aiError: '解釈の生成に失敗しました。もう一度お試しください。' });
     }
   };
 
@@ -945,7 +972,7 @@ class App extends React.Component {
       kicker: '今回の見立て',
       para1: '', para2: '', transitionText: '', closing: '',
       isPresentFocus: false, showFocusNote: false,
-      aiResult: null, aiLoading: false, aiError: '', aiRevealed: false, aiButton: false, aiChip: '',
+      aiResult: null, aiLoading: false, aiSlow: false, aiError: '', aiRevealed: false, aiButton: false, aiChip: '',
       present: null,
     };
 
@@ -981,6 +1008,7 @@ class App extends React.Component {
       };
       out.aiResult = s.aiResult;
       out.aiLoading = s.aiLoading;
+      out.aiSlow = s.aiSlow;
       out.aiError = s.aiError;
       out.aiRevealed = s.aiRevealed;
       out.aiButton = !s.aiRevealed && !s.aiLoading;
@@ -1061,7 +1089,10 @@ class App extends React.Component {
           ),
           e('span', { style: { fontSize: '10.5px', letterSpacing: '0.1em', color: '#9aa0b8' } }, out.aiChip)
         ),
-        out.aiLoading ? e('p', { key: 'ail', style: { fontSize: '13.5px', lineHeight: 1.9, color: '#9aa0b8', margin: 0, textAlign: 'center' } }, '読み解いています…') : null,
+        out.aiLoading ? e('div', { key: 'ail', style: { textAlign: 'center' } },
+          e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#9aa0b8', margin: 0 } }, '読み解いています…'),
+          out.aiSlow ? e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#b8bcc9', margin: '8px 0 0' } }, '（初回は起動に少し時間がかかることがあります）') : null
+        ) : null,
         (out.aiError && !out.aiLoading) ? e('p', { key: 'aie', style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.aiError) : null,
         (out.aiResult && !out.aiLoading) ? e('div', { key: 'air', style: { animation: 'kz-fade .8s ease both' } },
           this.renderAiPart('本卦', out.aiResult.honka ? (out.aiResult.honka.name + (out.aiResult.honka.reading ? '（' + out.aiResult.honka.reading + '）' : '')) : null, out.aiResult.honka ? out.aiResult.honka.interpretation : null),
