@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
-"""AI解釈生成 — Claude (Sonnet 4.6) 呼び出しとプロンプト構築。
+"""AI解釈生成 — Claude (Haiku 4.5) 呼び出しとプロンプト構築。
 
 コスト最適化の核はプロンプトキャッシュ。固定部分（トーン指示＋64卦リファレンス）を
 `system` 配列の1ブロックにまとめ、cache_control を付けてキャッシュする。
 ユーザーごとに変わる部分（問い・卦）は messages 側に置きキャッシュ対象外にする。
 
-注意: claude-sonnet-4-6 のキャッシュ最小プレフィックスは 2,048 トークン。
-固定部分に64卦リファレンスを含めることでこの閾値を確実に超えさせている。
+注意: claude-haiku-4-5 のキャッシュ最小プレフィックスは 4,096 トークン
+（Sonnet 4.6 の 2,048 から倍増）。固定部分（SYSTEM_INSTRUCTION＋64卦リファレンス）が
+この閾値を超えていないとキャッシュが静かに無効化されるため、モデル変更時は
+count_tokens で固定部分のトークン数を実測し、4,096 を超えているか確認すること。
+超えない場合はリファレンスを増やすか、キャッシュ前提を見直す。
 """
 import json
 import logging
-import re
 
 from anthropic import Anthropic
 
@@ -18,12 +20,27 @@ from hexagrams import HEXAGRAMS
 
 log = logging.getLogger("ekikyo")
 
-MODEL = "claude-sonnet-4-6"
+MODEL = "claude-haiku-4-5"
 # 3パート（本卦300-400字＋之卦150-250字＋捉え方150-250字＝最大~900字）＋JSON枠を
 # 日本語トークンで途中切断させない余裕を持たせる。出力課金は生成分のみなので、
 # 上限を上げても通常コストは変わらない（長さは system 指示で抑える）。
 MAX_TOKENS = 2048
 TEMPERATURE = 0.7
+
+# 構造化出力スキーマ。3キーをすべて必須にして有効なJSONをモデル側で保証させる。
+# これにより _parse_json のコードフェンス剥がし／ブレース抽出が不要になり、
+# キー欠落（shika だけ落ちる等）も構造的に防げる。
+# shika_interpretation は変爻が無いとき空文字 "" を入れる（キー自体は必須）。
+OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "honka_interpretation": {"type": "string"},
+        "shika_interpretation": {"type": "string"},
+        "advice": {"type": "string"},
+    },
+    "required": ["honka_interpretation", "shika_interpretation", "advice"],
+    "additionalProperties": False,
+}
 
 # クライアントは遅延生成（起動時にAPIキー必須にしない／テストしやすくするため）。
 _client = None
@@ -44,19 +61,21 @@ SYSTEM_INSTRUCTION = """\
 - 断定を避け、「〜という見方もできる」「〜と捉えると」という余白を残します。
 - 陰陽五行の専門用語を多用せず、易を知らない人にも開かれた言葉で語ります。
 - 文体は丁寧だが説教くさくない。背筋が伸びるが、威圧しない。
+- 本卦・之卦の景色は、卦そのものが持つ意味の格を保って描きます。ただし問いが
+  立てられているときは、その問いの状況に引きつけて景色を描いてください
+  （問いを無視した一般論で終わらせない）。問いが無いときは卦そのものを淡々と描きます。
 
 与えられた情報（問い・本卦・変爻・之卦）と、後段の六十四卦リファレンスを踏まえて、
 次の3つを日本語で書いてください。
 
-1. honka_interpretation … 本卦が示す「いまの景色」。300〜400字程度。
-2. shika_interpretation … 之卦（変化先）が示す「これから向かう方向性」。150〜250字程度。
-   変爻が無い場合は必ず空文字 "" にすること。
+1. honka_interpretation … 本卦が示す「いまの景色」。問いがあるなら、その問いの状況に
+   重ねて描く。300〜400字程度。
+2. shika_interpretation … 之卦（変化先）が示す「これから向かう方向性」。問いがあるなら、
+   問いに照らした変化として描く。150〜250字程度。変爻が無い場合は必ず空文字 "" にすること。
 3. advice … 問いに対する「捉え方の提案」。150〜250字程度。問いが無い場合は本卦のみに基づく。
 
-出力は、必ず次のJSON「のみ」を返してください。前置き・後置き・説明文・
-Markdownのコードフェンス（```）は一切付けないこと。
-
-{"honka_interpretation": "...", "shika_interpretation": "...", "advice": "..."}
+各項目は上記の字数を目安に、過不足なく書いてください。出力フォーマットは構造化出力
+スキーマで honka_interpretation / shika_interpretation / advice の3キーに固定されています。
 """
 
 
@@ -103,6 +122,9 @@ def generate(question, honka_name, honka_lower, honka_upper, changing_lines, shi
             }
         ],
         messages=[{"role": "user", "content": user_block}],
+        # 構造化出力で有効なJSON（3キー）を保証させる。messages 側に置くので
+        # system のキャッシュ・プレフィックスには影響しない。
+        output_config={"format": {"type": "json_schema", "schema": OUTPUT_SCHEMA}},
     )
 
     u = resp.usage
@@ -124,17 +146,14 @@ def generate(question, honka_name, honka_lower, honka_upper, changing_lines, shi
 
 
 def _parse_json(text: str) -> dict:
-    """AI出力をJSONとして取り出す。コードフェンスや前後テキストが付いても耐える。"""
-    s = (text or "").strip()
-    if s.startswith("```"):
-        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
-        s = re.sub(r"\s*```$", "", s).strip()
-    # 最外のJSONオブジェクトだけを取り出す
-    start = s.find("{")
-    end = s.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        s = s[start:end + 1]
-    data = json.loads(s)  # 失敗時は呼び出し側で500に変換しログを残す
+    """構造化出力により有効なJSONが返る前提でパースする。失敗しうるのは max_tokens での
+    途中切断など異常時のみ。その場合はモデルの生出力をログに残してから例外を投げ、
+    呼び出し側で500に変換させる（何が返って落ちたかを後から追えるようにするため）。"""
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        log.error("failed to parse model JSON output (truncated?); raw=%r", text)
+        raise
     return {
         "honka_interpretation": data.get("honka_interpretation", ""),
         "shika_interpretation": data.get("shika_interpretation", ""),

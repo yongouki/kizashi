@@ -1,7 +1,7 @@
 # ekikyo-api
 
 易経コイン占いサイト「兆 kizashi」のAI解釈バックエンド（FastAPI）。
-フロントから本卦・之卦・問いを受け取り、Claude (Sonnet 4.6) に解釈文を生成させて返す。
+フロントから本卦・之卦・問いを受け取り、Claude (Haiku 4.5) に解釈文を生成させて返す。
 
 ## 構成
 
@@ -9,7 +9,7 @@
 |----------|------|
 | `main.py` | FastAPIアプリ本体・エンドポイント（`/api/divine`, `/health`） |
 | `hexagrams.py` | 64卦マスタ（`tools/gen_hexagrams.js` で `../hexdata.js` から自動生成） |
-| `interpreter.py` | Claude呼び出し・プロンプト構築（プロンプトキャッシュ有効） |
+| `interpreter.py` | Claude呼び出し・プロンプト構築（プロンプトキャッシュ＋構造化出力） |
 | `gatekeeper.py` | 門番（Cookieによる1日1回判定） |
 | `tools/gen_hexagrams.js` | 64卦マスタの再生成スクリプト（Node、ビルド時のみ） |
 
@@ -58,8 +58,10 @@ node ekikyo-api/tools/gen_hexagrams.js .
 ## プロンプトキャッシュの確認
 
 `interpreter.py` は固定部分（トーン指示＋64卦リファレンス）を `system` に入れ
-`cache_control` でキャッシュする。`claude-sonnet-4-6` のキャッシュ最小長は **2,048トークン**で、
-64卦リファレンスでこれを超える。サーバログに毎回 usage を出力するので、
+`cache_control` でキャッシュする。`claude-haiku-4-5` のキャッシュ最小長は **4,096トークン**
+（Sonnet 4.6 の 2,048 から倍増）。固定部分がこれを下回るとキャッシュは無言で無効化される
+（エラーは出ず `cache_creation_input_tokens=0` のまま）ため、モデル変更時は count_tokens で
+固定部分のトークン数を実測すること。サーバログに毎回 usage を出力するので、
 2回目以降 `cache_read > 0` になっていればキャッシュが効いている。
 
 ## Renderへのデプロイ
