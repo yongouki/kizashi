@@ -513,8 +513,16 @@ class App extends React.Component {
         // otherwise fall through to the manual fallback
       }
     }
-    // 2) fallback (desktop / no file-share): hand over the image + copy the text
+    // 2) fallback (desktop / no file-share): open X's web intent, and also
+    //    save the image + copy the text so the reading image can be attached by hand.
+    //    (X's web intent can't attach images itself — but the URL renders the OG card.)
     try {
+      // open the X composer first, while the tap's user-activation is still fresh.
+      // NOTE: do NOT pass 'noopener'/'noreferrer' here — either one forces window.open()
+      // to return null (spec), which would break the opened/blocked detection in `win` below.
+      const intent = 'https://twitter.com/intent/tweet?text=' +
+        encodeURIComponent(text) + '&url=' + encodeURIComponent(url);
+      const win = window.open(intent, '_blank');
       if (file) {
         const u = URL.createObjectURL(file);
         const a = document.createElement('a'); a.href = u; a.download = file.name;
@@ -525,7 +533,10 @@ class App extends React.Component {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         try { await navigator.clipboard.writeText(text + '\n' + url); copied = true; } catch (_) {}
       }
-      this.setState({ toast: file ? (copied ? '画像を保存し、本文をコピーしました' : '画像を保存しました') : (copied ? 'コピーしました' : '共有に対応していません') });
+      const msg = win
+        ? (file ? 'Xの投稿画面を開きました。画像も保存したので、必要なら添付してください' : 'Xの投稿画面を開きました')
+        : (file ? (copied ? '画像を保存し、本文をコピーしました' : '画像を保存しました') : (copied ? 'コピーしました' : '共有に対応していません'));
+      this.setState({ toast: msg });
       this._clearToast();
     } catch (e) {
       this.setState({ toast: '共有に失敗しました' }); this._clearToast();
@@ -787,6 +798,54 @@ class App extends React.Component {
   }
 
   hexContent(num) { return (typeof HEX !== 'undefined' && HEX[num]) ? HEX[num] : {}; }
+
+  // 爻の呼び名を、位置(下=0…上=5)と陰陽(1=陽→九／0=陰→六)から組み立てる。
+  // 初・上は接頭、中四爻は陰陽を先に置く（初九 / 九二 / 上六 …）。
+  yaoName(i, val) {
+    const yy = (val === 1) ? '九' : '六';
+    if (i === 0) return '初' + yy;
+    if (i === 5) return '上' + yy;
+    return yy + ['二','三','四','五'][i - 1];
+  }
+
+  // 結果画面：動いた爻（変爻）の爻辞だけを出す。爻辞データを持たない卦では何も描かない
+  // （64卦すべて整備済みだが、未整備でも安全）。全6爻が動くときは考変占に従い、用九/用六
+  // （乾・坤）のみ出し、それ以外は之卦で読むため何も出さない（カルーセルが之卦を見せている）。
+  renderYaoSection(present) {
+    if (!present) return null;
+    const h = this.hexContent(present.num);
+    const data = h.lines;
+    if (!data) return null;                       // 爻辞データ未整備の卦 → 非表示
+    const accent = CONFIG.ACCENT;
+    const changing = this.changing || [];
+    const allMove = changing.length === 6 && changing.every(Boolean);
+
+    const row = (name, yao) => e('div', { key: name, style: { marginBottom: '20px' } },
+      e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px', marginBottom: '8px' } },
+        e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '12.5px', color: '#ffffff', background: accent, borderRadius: '999px', padding: '4px 13px', letterSpacing: '0.06em', flex: 'none', alignSelf: 'center' } }, name),
+        e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.03em', lineHeight: 1.7 } }, yao.text)
+      ),
+      yao.meaning ? e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 6px', textWrap: 'pretty' } }, yao.meaning) : null,
+      yao.advice ? e('p', { style: { fontSize: '13px', lineHeight: 1.9, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, yao.advice) : null
+    );
+
+    const rows = [];
+    if (allMove) {
+      // 全爻動：乾坤は用九/用六を出す。それ以外は個々の爻辞でなく之卦で読むため行を出さない。
+      if (h.yong) rows.push(row(h.yong.name || (present.lines.every((v) => v === 1) ? '用九' : '用六'), h.yong));
+    } else {
+      for (let i = 0; i < 6; i++) {
+        if (changing[i] && data[i]) rows.push(row(this.yaoName(i, present.lines[i]), data[i]));
+      }
+    }
+    if (!rows.length) return null;                // 変爻なし／全爻動(非乾坤) → 爻辞は読まない（之卦で見る）
+
+    return e('div', { style: { marginTop: '30px', borderTop: '1px solid #f1efe9', paddingTop: '26px' } },
+      e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '19px', color: '#2b2823', margin: '0 0 6px', letterSpacing: '0.03em' } }, '動いた爻'),
+      e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#aaa49a', margin: '0 0 20px' } }, '変化している線に添えられた言葉です。いまの段階を、より細かく映します。'),
+      rows
+    );
+  }
 
   // Annotate classical text: glossary terms get furigana (ruby) + are tappable for a definition.
   annotateClassical(text) {
@@ -1080,6 +1139,8 @@ class App extends React.Component {
       e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '19px', color: '#2b2823', margin: '0 0 16px', letterSpacing: '0.03em' } }, '考え方・捉え方'),
       para(out.para1, 'p1'), para(out.para2, 'p2'), para(out.transitionText, 'pt'),
       e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.closing),
+      // 動いた爻の爻辞（本卦が中央のときのみ。爻辞データのある卦・変爻ありのときだけ中身が出る）
+      out.isPresentFocus ? this.renderYaoSection(out.present) : null,
       // AI area (hidden when re-viewing a past reading from history)
       (out.isPresentFocus && !out.viewing) ? e('div', { style: { marginTop: '30px', border: '1px solid #e7e9f0', borderRadius: '20px', padding: '22px 20px', background: '#fafbfd' } },
         e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' } },
@@ -1096,6 +1157,7 @@ class App extends React.Component {
         (out.aiError && !out.aiLoading) ? e('p', { key: 'aie', style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.aiError) : null,
         (out.aiResult && !out.aiLoading) ? e('div', { key: 'air', style: { animation: 'kz-fade .8s ease both' } },
           this.renderAiPart('本卦', out.aiResult.honka ? (out.aiResult.honka.name + (out.aiResult.honka.reading ? '（' + out.aiResult.honka.reading + '）' : '')) : null, out.aiResult.honka ? out.aiResult.honka.interpretation : null),
+          out.aiResult.yao ? this.renderAiPart('動爻', out.aiResult.yao.name, out.aiResult.yao.interpretation) : null,
           out.aiResult.shika ? this.renderAiPart('之卦', out.aiResult.shika.name, out.aiResult.shika.interpretation) : null,
           out.aiResult.advice ? this.renderAiPart('捉え方', null, out.aiResult.advice) : null
         ) : null,
@@ -1290,6 +1352,28 @@ class App extends React.Component {
       h.advice ? e(React.Fragment, null,
         e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 12px', letterSpacing: '0.03em' } }, '読み方・心がけ'),
         e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: 0, textWrap: 'pretty' } }, h.advice)
+      ) : null,
+      // 六爻 — 爻辞（データのある卦のみ。下から上へ全6本＋必要なら用九／用六）
+      h.lines ? e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9' } },
+        e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 4px', letterSpacing: '0.03em' } }, '六爻'),
+        e('p', { style: { fontSize: '11.5px', lineHeight: 1.8, color: '#aaa49a', margin: '0 0 16px' } }, '下から上へ、状況の段階を表す六本の言葉。'),
+        lines.map((v, i) => {
+          const yao = h.lines[i]; if (!yao) return null;
+          return e('div', { key: i, style: { padding: '12px 0', borderTop: i ? '1px solid #f4f2ec' : 'none' } },
+            e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', marginBottom: '6px' } },
+              e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '13px', color: '#5a6184', flex: 'none', width: '40px' } }, this.yaoName(i, v)),
+              e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14.5px', color: '#2b2823', lineHeight: 1.75, letterSpacing: '0.02em' } }, yao.text)
+            ),
+            yao.meaning ? e('p', { style: { fontSize: '13px', lineHeight: 1.9, color: '#6b665e', margin: '0 0 0 52px', textWrap: 'pretty' } }, yao.meaning) : null
+          );
+        }),
+        h.yong ? e('div', { style: { padding: '12px 0', borderTop: '1px solid #f4f2ec' } },
+          e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '12px', marginBottom: '6px' } },
+            e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '13px', color: '#5a6184', flex: 'none', width: '40px' } }, h.yong.name || (lines.every((v) => v === 1) ? '用九' : '用六')),
+            e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14.5px', color: '#2b2823', lineHeight: 1.75, letterSpacing: '0.02em' } }, h.yong.text)
+          ),
+          h.yong.meaning ? e('p', { style: { fontSize: '13px', lineHeight: 1.9, color: '#6b665e', margin: '0 0 0 52px', textWrap: 'pretty' } }, h.yong.meaning) : null
+        ) : null
       ) : null,
       e('div', { style: { marginTop: '32px', paddingTop: '22px', borderTop: '1px solid #f1efe9', display: 'flex', gap: '12px', justifyContent: 'center' } },
         e('button', { onClick: () => this.go('reference'), className: 'kz-ghost', style: { padding: '13px 26px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '一覧へ'),

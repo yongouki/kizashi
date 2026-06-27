@@ -130,12 +130,20 @@ def divine(body: DivineRequest, request: Request):
 
     # (4) 整形して返す（成功時のみ門番のCookieを更新）
     honka_reading = honka["reading"]
+    # 動爻（爻辞にもとづく読み）。動いた爻があり(yao_names)、かつモデルが実際に読みを
+    # 返したとき(yao_interpretation が非空)だけ載せる。空のときは動爻欄を省く——静的な
+    # 爻辞パネルが原文・意味は表示するので、欠けるのはAIの読みだけ（黙って壊れはしない）。
+    # name は動いた爻の呼び名（例 "九五"、複数なら "初九・上九"、全爻動の乾坤は "用九"/"用六"）。
+    yao = None
+    if gen.get("yao_names") and gen.get("yao_interpretation"):
+        yao = {"name": "・".join(gen["yao_names"]), "interpretation": gen["yao_interpretation"]}
     payload = {
         "honka": {
             "name": body.hexagram.name,
             "reading": honka_reading,
             "interpretation": gen["honka_interpretation"],
         },
+        "yao": yao,
         "shika": (
             {"name": shika_name, "interpretation": gen["shika_interpretation"]}
             if (has_changing and shika_name)
