@@ -503,8 +503,12 @@ class App extends React.Component {
     let file = null;
     try { file = this._makeShareFileSync(present); } catch (_) {}
 
-    // 1) share the image together with the text (Web Share Level 2 — best for X / LINE on mobile)
-    if (file && navigator.canShare && navigator.canShare({ files: [file] })) {
+    // 1) mobile/touch: native share sheet with the image attached (best for the X app / LINE).
+    //    Gate on a coarse primary pointer (finger) so desktop (mouse) skips this and falls
+    //    through to X's web intent below — the desktop OS share sheet usually lacks X and
+    //    can't pre-fill a tweet, so on PC it can't reliably post to X.
+    const coarsePointer = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+    if (coarsePointer && file && navigator.canShare && navigator.canShare({ files: [file] })) {
       try {
         await navigator.share({ files: [file], text: text + '\n' + url, title: '兆 kizashi' });
         return;
