@@ -63,6 +63,12 @@
   .kz-cta:active { opacity: .88; }
   .kz-ghost:active { background: #faf9f7; }
   .kz-ai:active { background: #f3f4f8; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible, [tabindex]:focus-visible {
+    outline: 3px solid rgba(47, 58, 110, .38);
+    outline-offset: 3px;
+  }
+  .kz-icon-button { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .kz-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 
   @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
@@ -1416,6 +1422,12 @@ class App extends React.Component {
     autoCasting: false,
     lastThrow: null,
     glossTerm: null,
+    aiConsentOpen: false,
+    shareOpen: false,
+    shareMode: 'share',
+    shareIncludeQuestion: false,
+    confirmClearOpen: false,
+    deletedReading: null,
   };
 
   setRefQuery = (e) => this.setState({ refQuery: e.target.value });
@@ -1480,8 +1492,10 @@ class App extends React.Component {
   _endDrag() {
     const dx = this._dx || 0;
     let fi = this.state.focusIndex;
-    if (dx < -40 && fi < 2) fi++;
+    const last = (this._carouselCount || 3) - 1;
+    if (dx < -40 && fi < last) fi++;
     else if (dx > 40 && fi > 0) fi--;
+    fi = Math.min(last, fi);
     this.setState({ dragging: false, dragDX: 0, focusIndex: fi });
   }
 
@@ -1511,7 +1525,7 @@ class App extends React.Component {
     this._endDrag();
     try { if (e && e.pointerId != null) e.currentTarget.releasePointerCapture(e.pointerId); } catch (_) {}
   };
-  setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min(2, i)) });
+  setFocus = (i) => this.setState({ focusIndex: Math.max(0, Math.min((this._carouselCount || 3) - 1, i)) });
   onStageKey = (ev) => {
     if (ev.key === 'ArrowLeft') { ev.preventDefault(); this.setFocus(this.state.focusIndex - 1); }
     else if (ev.key === 'ArrowRight') { ev.preventDefault(); this.setFocus(this.state.focusIndex + 1); }
@@ -1563,13 +1577,53 @@ class App extends React.Component {
   accent() { return CONFIG.ACCENT; }
 
   // ---- history store (localStorage, newest-first) ----
-  SEED_LINES = [0,0,1,0,0,0]; // 地山謙 — first-timers' "previous"
   loadHistory() { try { return JSON.parse(localStorage.getItem('kz_history') || '[]') || []; } catch (e) { return []; } }
   saveHistory(arr) { try { localStorage.setItem('kz_history', JSON.stringify(arr)); } catch (e) {} }
   newId() { return 'r' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
 
+  sessionFields = ['screen','question','casts','rot','rotZ','everTossed','pastLines','focusIndex','detailNum','refQuery','viewing','aiRevealed','aiResult','aiError'];
+  loadSession() {
+    try {
+      const saved = JSON.parse(sessionStorage.getItem('kz_session') || 'null');
+      if (!saved || !['ask','cast','result','about','history','reference','detail'].includes(saved.screen)) return null;
+      if ((saved.screen === 'cast' || saved.screen === 'result') && !Array.isArray(saved.casts)) return null;
+      return saved;
+    } catch (_) { return null; }
+  }
+  saveSession() {
+    try {
+      const saved = {};
+      this.sessionFields.forEach((key) => { saved[key] = this.state[key]; });
+      sessionStorage.setItem('kz_session', JSON.stringify(saved));
+    } catch (_) {}
+  }
+  viewUrl(screen, detailNum) { return '#' + screen + (screen === 'detail' && detailNum ? '-' + detailNum : ''); }
+  replaceBrowserView(screen, detailNum) {
+    try { history.replaceState({ kz: true, screen, detailNum: detailNum || null }, '', this.viewUrl(screen, detailNum)); } catch (_) {}
+  }
+  pushBrowserView(screen, detailNum) {
+    try { history.pushState({ kz: true, screen, detailNum: detailNum || null }, '', this.viewUrl(screen, detailNum)); } catch (_) {}
+  }
+  hasCastInProgress() { return this.state.screen === 'cast' && this.state.casts.length > 0; }
+  confirmDiscardCast() { return !this.hasCastInProgress() || window.confirm('途中まで立てた卦を閉じますか？\n投げた石の結果は失われます。'); }
+
+  _onPopState = (ev) => {
+    if (this._restoringCancelledBack) { this._restoringCancelledBack = false; return; }
+    if (!this.confirmDiscardCast()) {
+      this._restoringCancelledBack = true;
+      try { history.forward(); } catch (_) {}
+      return;
+    }
+    const view = ev.state && ev.state.kz ? ev.state : { screen: 'ask', detailNum: null };
+    this.setState((s) => ({
+      screen: view.screen || 'ask', detailNum: view.detailNum || null,
+      navStack: s.navStack.length ? s.navStack.slice(0, -1) : [],
+      menuOpen: false, glossTerm: null, aiConsentOpen: false, shareOpen: false, confirmClearOpen: false,
+    }));
+  };
+
   componentDidMount() {
-    this._warmBackend(); // wake Render ahead of the divination so the AI reply isn't cold-started
+    window.addEventListener('popstate', this._onPopState);
     // migrate a legacy single kz_prev into the history array
     try {
       if (!localStorage.getItem('kz_history')) {
@@ -1588,6 +1642,36 @@ class App extends React.Component {
         }
       }
     } catch (e) {}
+    const restored = this.loadSession();
+    if (restored) this.setState({ ...restored, navStack: restored.screen === 'ask' ? [] : [{ screen: 'ask', detailNum: null }] }, () => {
+      if (this.state.screen === 'ask') this.replaceBrowserView('ask');
+      else {
+        this.replaceBrowserView('ask');
+        this.pushBrowserView(this.state.screen, this.state.detailNum);
+      }
+    });
+    else this.replaceBrowserView(this.state.screen, this.state.detailNum);
+  }
+
+  componentDidUpdate(prevProps, prevState) {
+    this.saveSession();
+    const wasSheet = prevState.menuOpen || prevState.glossTerm || prevState.aiConsentOpen || prevState.shareOpen || prevState.confirmClearOpen;
+    const isSheet = this.state.menuOpen || this.state.glossTerm || this.state.aiConsentOpen || this.state.shareOpen || this.state.confirmClearOpen;
+    if (!wasSheet && isSheet) {
+      this._focusBeforeSheet = document.activeElement;
+      setTimeout(() => {
+        const first = this._sheetNode && this._sheetNode.querySelector('button, input, [href], [tabindex]:not([tabindex="-1"])');
+        if (first) first.focus(); else if (this._sheetNode) this._sheetNode.focus();
+      }, 0);
+    } else if (wasSheet && !isSheet && this._focusBeforeSheet && this._focusBeforeSheet.focus) {
+      this._focusBeforeSheet.focus();
+      this._focusBeforeSheet = null;
+    }
+  }
+
+  componentWillUnmount() {
+    window.removeEventListener('popstate', this._onPopState);
+    if (this._aiAbort) this._aiAbort.abort();
   }
 
   // ---- actions ----
@@ -1601,7 +1685,11 @@ class App extends React.Component {
   startCast = () => {
     this._resetAuto();
     this._warmBackend(); // begin warming the backend as the user starts casting
-    this.setState({ screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, navStack: [], menuOpen: false, autoCasting: false });
+    this.setState((s) => ({
+      screen: 'cast', casts: [], rot: [0,0,0], rotZ: [0,0,0], everTossed: false, tossing: false,
+      aiRevealed: false, aiResult: null, aiError: '', aiLoading: false,
+      navStack: s.navStack.concat([{ screen: 'ask', detailNum: null }]), menuOpen: false, autoCasting: false,
+    }), () => this.pushBrowserView('cast'));
   };
 
   toss = () => {
@@ -1668,10 +1756,10 @@ class App extends React.Component {
     try {
       used = localStorage.getItem('kz_ai_date') === this._jstDate();
     } catch (e) {}
-    pastLines = (hist.length && hist[0].lines && hist[0].lines.length === 6) ? hist[0].lines : this.SEED_LINES.slice();
+    pastLines = (hist.length && hist[0].lines && hist[0].lines.length === 6) ? hist[0].lines : null;
     // 今日すでにAIを使っていれば「完了」状態にする。解釈テキストは占いごとに固有なので、
     // 別の占いには復元しない（aiResult は null のまま、render側で「受け取り済み」を表示）。
-    this.setState({ screen: 'result', aiRevealed: used, aiResult: null, aiError: '', aiLoading: false, pastLines, focusIndex: 1, dragDX: 0, dragging: false, viewing: false });
+    this.setState({ screen: 'result', aiRevealed: used, aiResult: null, aiError: '', aiLoading: false, pastLines, focusIndex: pastLines ? 1 : 0, dragDX: 0, dragging: false, viewing: false }, () => this.replaceBrowserView('result'));
     // record this reading at the head of history
     try {
       const present = this.hexFromLines(this.state.casts.map(c => c.value));
@@ -1679,7 +1767,7 @@ class App extends React.Component {
       const futureLines = this.state.casts.map(c => c.changing ? (1 - c.value) : c.value);
       const future = this.hexFromLines(futureLines);
       const rec = {
-        id: this.newId(), ts: Date.now(), date: new Date().toISOString().slice(0, 10),
+        id: this.newId(), ts: Date.now(), date: this._jstDate(),
         question: this.state.question, lines: present.lines, changing,
         present: { num: present.num, name: present.name },
         future: { num: future.num, name: future.name }, pastLines,
@@ -1693,30 +1781,56 @@ class App extends React.Component {
     const casts = rec.lines.map((v, i) => ({ value: v, changing: !!(rec.changing && rec.changing[i]) }));
     this.go('result', {
       casts, question: rec.question || '', pastLines: rec.pastLines || null,
-      focusIndex: 1, dragDX: 0, dragging: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, viewing: true,
+      focusIndex: rec.pastLines ? 1 : 0, dragDX: 0, dragging: false, aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, viewing: true,
     });
   };
-  deleteReading = (id) => { this.saveHistory(this.loadHistory().filter((r) => r.id !== id)); this.forceUpdate(); };
-  clearHistory = () => { this.saveHistory([]); this.forceUpdate(); };
+  deleteReading = (id) => {
+    const hist = this.loadHistory();
+    const index = hist.findIndex((r) => r.id === id);
+    if (index < 0) return;
+    const rec = hist[index];
+    this.saveHistory(hist.filter((r) => r.id !== id));
+    this.setState({ deletedReading: { rec, index }, toast: '記録を削除しました' });
+    this._clearToast(5000, true);
+  };
+  undoDeleteReading = () => {
+    const deleted = this.state.deletedReading;
+    if (!deleted) return;
+    const hist = this.loadHistory();
+    const next = hist.slice();
+    next.splice(Math.min(deleted.index, next.length), 0, deleted.rec);
+    this.saveHistory(next.slice(0, 200));
+    this.setState({ deletedReading: null, toast: '記録を元に戻しました' });
+    this._clearToast();
+  };
+  clearHistory = () => this.setState({ confirmClearOpen: true });
+  confirmClearHistory = () => {
+    this.saveHistory([]);
+    this.setState({ confirmClearOpen: false, deletedReading: null, toast: '履歴をすべて削除しました' });
+    this._clearToast();
+  };
 
-  again = () => this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, focusIndex: 1, dragDX: 0, dragging: false, navStack: [], menuOpen: false, viewing: false, glossTerm: null });
+  again = () => {
+    if (!this.confirmDiscardCast()) return;
+    this.setState({ screen: 'ask', question: '', casts: [], rot: [0,0,0], rotZ: [0,0,0], aiRevealed: false, aiResult: null, aiError: '', aiLoading: false, focusIndex: 0, dragDX: 0, dragging: false, navStack: [], menuOpen: false, viewing: false, glossTerm: null, aiConsentOpen: false, shareOpen: false }, () => this.replaceBrowserView('ask'));
+  };
+  goHome = () => {
+    if (this.state.screen === 'ask') return;
+    this.go('ask');
+  };
 
   // ---- navigation (state-based router with a back stack) ----
   go = (screen, extra) => this.setState((s) => ({
     navStack: s.navStack.concat([{ screen: s.screen, detailNum: s.detailNum }]),
     screen, menuOpen: false, glossTerm: null, ...(extra || {}),
-  }));
-  back = () => this.setState((s) => {
-    if (s.navStack.length) {
-      const prev = s.navStack[s.navStack.length - 1];
-      return { navStack: s.navStack.slice(0, -1), screen: prev.screen, detailNum: prev.detailNum, menuOpen: false, glossTerm: null };
-    }
-    return { screen: 'ask', menuOpen: false, glossTerm: null };
-  });
+  }), () => this.pushBrowserView(screen, extra && extra.detailNum));
+  back = () => {
+    if (!this.confirmDiscardCast()) return;
+    if (this.state.navStack.length) { try { history.back(); return; } catch (_) {} }
+    this.setState({ screen: 'ask', menuOpen: false, glossTerm: null }, () => this.replaceBrowserView('ask'));
+  };
   onBack = () => {
-    const s = this.state;
-    if (s.navStack.length) return this.back();
-    return this.setState({ screen: 'ask', menuOpen: false, glossTerm: null }); // cast / result → ask
+    this.back();
   };
   toggleMenu = () => this.setState((s) => ({ menuOpen: !s.menuOpen }));
   closeMenu = () => this.setState({ menuOpen: false });
@@ -1739,7 +1853,22 @@ class App extends React.Component {
   // The AI reading seam, now wired to the real backend. `this._aiPayload` is
   // built in renderVals (where the hexagrams are in scope). Cookie-based 1/day
   // lives server-side; localStorage(kz_ai_date) is the practical first-party gate.
-  requestAI = async () => {
+  requestAI = () => {
+    let consented = false;
+    try { consented = localStorage.getItem('kz_ai_consent_v1') === '1'; } catch (_) {}
+    if (!consented) { this.setState({ aiConsentOpen: true }); return; }
+    this.runAI();
+  };
+  confirmAIConsent = () => {
+    try { localStorage.setItem('kz_ai_consent_v1', '1'); } catch (_) {}
+    this.setState({ aiConsentOpen: false }, this.runAI);
+  };
+  cancelAI = () => {
+    if (this._aiAbort) this._aiAbort.abort();
+    clearTimeout(this._slowT);
+    this.setState({ aiLoading: false, aiSlow: false, aiError: '読み解きを中止しました。もう一度お試しいただけます。' });
+  };
+  runAI = async () => {
     if (this.state.aiLoading) return;
     this.setState({ aiLoading: true, aiError: '', aiSlow: false });
     // if it's taking a while (cold start), reassure rather than look stuck
@@ -1747,11 +1876,13 @@ class App extends React.Component {
     this._slowT = setTimeout(() => { if (this.state.aiLoading) this.setState({ aiSlow: true }); }, 7000);
     const stampToday = () => { try { localStorage.setItem('kz_ai_date', this._jstDate()); } catch (e) {} };
     try {
+      this._aiAbort = new AbortController();
       const r = await fetch(CONFIG.AI_ENDPOINT, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this._aiPayload || {}),
+        signal: this._aiAbort.signal,
       });
       if (r.status === 429) {
         const j = await r.json().catch(() => ({}));
@@ -1767,24 +1898,30 @@ class App extends React.Component {
       this.setState({ aiLoading: false, aiSlow: false, aiRevealed: true, aiError: '', aiResult: data });
     } catch (e) {
       clearTimeout(this._slowT);
-      this.setState({ aiLoading: false, aiSlow: false, aiError: '解釈の生成に失敗しました。もう一度お試しください。' });
+      if (e && e.name === 'AbortError') return;
+      this.setState({ aiLoading: false, aiSlow: false, aiError: '解釈の生成に失敗しました。通信環境をご確認のうえ、もう一度お試しください。' });
+    } finally {
+      this._aiAbort = null;
     }
   };
 
   // ---- share / image ----
-  _clearToast() { if (this._toastT) clearTimeout(this._toastT); this._toastT = setTimeout(() => this.setState({ toast: '' }), 2200); }
+  _clearToast(delay, keepDeleted) {
+    if (this._toastT) clearTimeout(this._toastT);
+    this._toastT = setTimeout(() => this.setState({ toast: '', deletedReading: keepDeleted ? null : this.state.deletedReading }), delay || 2200);
+  }
   _present() { return this.hexFromLines(this.state.casts.map((c) => c.value)); }
 
-  composeShareText(present) {
+  composeShareText(present, includeQuestion) {
     const h = this.hexContent(present.num);
-    const q = (this.state.question && this.state.question.trim()) ? '問い：' + this.state.question.trim() + '\n' : '';
+    const q = (includeQuestion && this.state.question && this.state.question.trim()) ? '問い：' + this.state.question.trim() + '\n' : '';
     return q + '今回の卦は『' + present.name + '』（第' + present.num + '卦）。' + (h.summary || '') + '\n\n#易経 #兆kizashi';
   }
 
   // build the PNG File synchronously (no await) so navigator.share keeps the tap's
   // user-activation on iOS Safari — toDataURL + atob are sync, unlike canvas.toBlob.
-  _makeShareFileSync(present) {
-    const canvas = this.drawShareCanvas(present);
+  _makeShareFileSync(present, includeQuestion) {
+    const canvas = this.drawShareCanvas(present, includeQuestion);
     const dataUrl = canvas.toDataURL('image/png');
     const bin = atob(dataUrl.slice(dataUrl.indexOf(',') + 1));
     const arr = new Uint8Array(bin.length);
@@ -1792,13 +1929,23 @@ class App extends React.Component {
     return new File([arr], 'kizashi-' + present.num + '-' + present.name + '.png', { type: 'image/png' });
   }
 
-  shareReading = async () => {
+  openShareOptions = (mode) => this.setState({ shareOpen: true, shareMode: mode, shareIncludeQuestion: false });
+  confirmShareOptions = () => {
+    const mode = this.state.shareMode;
+    const includeQuestion = this.state.shareIncludeQuestion;
+    this.setState({ shareOpen: false }, () => {
+      if (mode === 'save') this.saveImage(includeQuestion);
+      else this.shareReading(includeQuestion);
+    });
+  };
+
+  shareReading = async (includeQuestion) => {
     if (this.state.casts.length < 6) return;
     const present = this._present();
-    const text = this.composeShareText(present);
-    const url = location.href;
+    const text = this.composeShareText(present, includeQuestion);
+    const url = location.origin + location.pathname;
     let file = null;
-    try { file = this._makeShareFileSync(present); } catch (_) {}
+    try { file = this._makeShareFileSync(present, includeQuestion); } catch (_) {}
 
     // 1) mobile/touch: native share sheet with the image attached (best for the X app / LINE).
     //    Gate on a coarse primary pointer (finger) so desktop (mouse) skips this and falls
@@ -1844,13 +1991,13 @@ class App extends React.Component {
     }
   };
 
-  saveImage = async () => {
+  saveImage = async (includeQuestion) => {
     if (this.state.casts.length < 6) return;
     try {
       this.setState({ toast: '画像を作成中…' });
       if (typeof document !== 'undefined' && document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
       const present = this._present();
-      const canvas = this.drawShareCanvas(present);
+      const canvas = this.drawShareCanvas(present, includeQuestion);
       const fname = 'kizashi-' + present.num + '-' + present.name + '.png';
       const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
       if (!blob) { this.setState({ toast: '画像の作成に失敗しました' }); this._clearToast(); return; }
@@ -1879,7 +2026,7 @@ class App extends React.Component {
 
   // Render the share image with the Canvas 2D API — reliable everywhere, unlike
   // html-to-image's foreignObject path which can come out blank on Safari / off-screen nodes.
-  drawShareCanvas(present) {
+  drawShareCanvas(present, includeQuestion) {
     const h = this.hexContent(present.num);
     const accent = CONFIG.ACCENT;
     const W = 540; // logical width (scaled by DPR below)
@@ -1889,7 +2036,7 @@ class App extends React.Component {
     const contentW = W - 2 * cardX - 2 * cardPad;
     const cx = W / 2;
     const date = new Date().toISOString().slice(0, 10);
-    const question = (this.state.question && this.state.question.trim()) ? this.state.question.trim() : '';
+    const question = (includeQuestion && this.state.question && this.state.question.trim()) ? this.state.question.trim() : '';
 
     // measuring pass (logical px, char-wrap for Japanese)
     const meas = document.createElement('canvas').getContext('2d');
@@ -1938,10 +2085,10 @@ class App extends React.Component {
         const startX = cx - (mw + 12 + kw) / 2;
         ctx.textAlign = 'left';
         ctx.fillStyle = '#2b2823'; ctx.font = '500 26px ' + MINCHO; ctx.fillText('兆', startX, y + 25);
-        ctx.fillStyle = '#b6b0a6'; ctx.font = '11px ' + GOTHIC; ctx.fillText('K I Z A S H I', startX + mw + 12, y + 21);
+        ctx.fillStyle = '#706b63'; ctx.font = '11px ' + GOTHIC; ctx.fillText('K I Z A S H I', startX + mw + 12, y + 21);
         ctx.textAlign = 'center';
       } else if (b.t === 'q') {
-        ctx.fillStyle = '#9a948b'; ctx.font = '15px ' + MINCHO;
+        ctx.fillStyle = '#706b63'; ctx.font = '15px ' + MINCHO;
         b.lines.forEach((ln, i) => ctx.fillText(ln, cx, y + 18 + i * 24));
       } else if (b.t === 'hex') {
         const rows = present.lines.slice().reverse(); let hy = y; ctx.fillStyle = accent;
@@ -1953,14 +2100,14 @@ class App extends React.Component {
       } else if (b.t === 'name') {
         ctx.fillStyle = '#2b2823'; ctx.font = '500 30px ' + MINCHO; ctx.fillText(present.name, cx, y + 28);
       } else if (b.t === 'reading') {
-        if (h.reading) { ctx.fillStyle = '#b6b0a6'; ctx.font = '13px ' + GOTHIC; ctx.fillText(h.reading, cx, y + 13); }
+        if (h.reading) { ctx.fillStyle = '#706b63'; ctx.font = '13px ' + GOTHIC; ctx.fillText(h.reading, cx, y + 13); }
       } else if (b.t === 'num') {
-        ctx.fillStyle = '#c3bdb2'; ctx.font = '13px ' + GOTHIC; ctx.fillText('第' + present.num + '卦', cx, y + 13);
+        ctx.fillStyle = '#706b63'; ctx.font = '13px ' + GOTHIC; ctx.fillText('第' + present.num + '卦', cx, y + 13);
       } else if (b.t === 'judg') {
         ctx.fillStyle = '#4a4640'; ctx.font = '15px ' + MINCHO;
         b.lines.forEach((ln, i) => ctx.fillText(ln, cx, y + 18 + i * 26));
       } else if (b.t === 'foot') {
-        ctx.fillStyle = '#b6b0a6'; ctx.font = '12px ' + GOTHIC; ctx.fillText(date + '  ·  兆 kizashi', cx, y + 12);
+        ctx.fillStyle = '#706b63'; ctx.font = '12px ' + GOTHIC; ctx.fillText(date + '  ·  兆 kizashi', cx, y + 12);
       }
       y += b.h;
     }
@@ -2018,10 +2165,10 @@ class App extends React.Component {
       { style: hstyle, w, faded: !main, showChanging: main }
     );
     return e('div', { style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', flex: 'none', opacity: main ? 1 : 0.62 } },
-      e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: main ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, label),
+      e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: main ? '#2f3a6e' : '#706b63', marginBottom: '14px', whiteSpace: 'nowrap' } }, label),
       e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: main ? '150px' : '92px' } }, hexEl),
-      e('div', { style: { fontFamily: mincho, fontSize: main ? '20px' : '14px', color: main ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em', lineHeight: 1.4 } }, hex.name),
-      e('div', { style: { fontSize: main ? '11px' : '10px', color: '#c3bdb2', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + hex.num + '卦')
+      e('div', { style: { fontFamily: mincho, fontSize: main ? '20px' : '14px', color: main ? '#2b2823' : '#706b63', marginTop: '16px', letterSpacing: '0.05em', lineHeight: 1.4 } }, hex.name),
+      e('div', { style: { fontSize: main ? '11px' : '10px', color: '#706b63', marginTop: '5px', letterSpacing: '0.08em' } }, '第' + hex.num + '卦')
     );
   }
 
@@ -2060,17 +2207,17 @@ class App extends React.Component {
           cursor: focused ? 'default' : 'pointer',
         }
       },
-        e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: focused ? '#2f3a6e' : '#b6b0a6', marginBottom: '14px', whiteSpace: 'nowrap' } }, c.label),
+        e('div', { style: { fontSize: '10px', letterSpacing: '0.18em', color: focused ? '#2f3a6e' : '#706b63', marginBottom: '14px', whiteSpace: 'nowrap' } }, c.label),
         e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
-        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '20px', color: focused ? '#2b2823' : '#9a948b', marginTop: '16px', letterSpacing: '0.05em' } }, c.hex.name),
-        e('div', { style: { fontSize: '10.5px', color: focused ? '#b6b0a6' : '#cfcabf', marginTop: '5px', letterSpacing: '0.12em' } }, this.hexContent(c.hex.num).reading || ''),
-        e('div', { style: { fontSize: '11px', color: '#c3bdb2', marginTop: '3px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '20px', color: focused ? '#2b2823' : '#706b63', marginTop: '16px', letterSpacing: '0.05em' } }, c.hex.name),
+        e('div', { style: { fontSize: '10.5px', color: focused ? '#706b63' : '#706b63', marginTop: '5px', letterSpacing: '0.12em' } }, this.hexContent(c.hex.num).reading || ''),
+        e('div', { style: { fontSize: '11px', color: '#706b63', marginTop: '3px', letterSpacing: '0.08em' } }, '第' + c.hex.num + '卦')
       );
     }));
 
     const stage = e('div', {
       ref: this.stageRef,
-      tabIndex: 0, role: 'group', 'aria-roledescription': 'カルーセル', 'aria-label': '前回・今回・次の卦（左右キーで切替）',
+      tabIndex: 0, role: 'group', 'aria-roledescription': 'カルーセル', 'aria-label': cells.map((c) => c.label).join('・') + '（左右キーで切替）',
       onKeyDown: this.onStageKey,
       onPointerDown: this.onDragStart, onPointerMove: this.onDragMove, onPointerUp: this.onDragEnd, onPointerLeave: this.onDragEnd, onPointerCancel: this.onDragEnd,
       style: { position: 'relative', width: '100%', overflow: 'hidden', touchAction: 'pan-y pinch-zoom', cursor: dragging ? 'grabbing' : 'grab', userSelect: 'none', outlineOffset: '4px' }
@@ -2079,18 +2226,17 @@ class App extends React.Component {
       track
     );
 
-    const dots = e('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '12px', marginTop: '22px' } },
+    const dots = e('div', { role: 'tablist', 'aria-label': '見立てを切り替える', style: { display: 'flex', alignItems: 'stretch', justifyContent: 'center', gap: '6px', marginTop: '22px', padding: '4px', background: '#f4f2ec', borderRadius: '14px' } },
       cells.map((c, i) => e('button', {
         key: i, onClick: () => this.setFocus(i),
-        'aria-label': c.label + 'へ', 'aria-current': i === fi ? 'true' : undefined,
-        style: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', cursor: 'pointer', border: 'none', background: 'none', padding: '2px' }
+        role: 'tab', 'aria-label': c.label + 'へ', 'aria-selected': i === fi ? 'true' : 'false',
+        style: { minWidth: '72px', minHeight: '40px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', border: 'none', borderRadius: '10px', background: i === fi ? '#ffffff' : 'transparent', padding: '8px 12px', boxShadow: i === fi ? '0 1px 5px rgba(50,44,36,.08)' : 'none' }
       },
-        e('div', { style: { width: i === fi ? '22px' : '7px', height: '7px', borderRadius: '4px', background: i === fi ? accent : '#dcd8d0', transition: 'all .3s ease' } }),
-        e('div', { style: { fontSize: '9.5px', letterSpacing: '0.16em', color: i === fi ? '#8c867d' : '#c3bdb2' } }, c.cap)
+        e('div', { style: { fontSize: '11px', letterSpacing: '0.1em', color: i === fi ? accent : '#706b63' } }, c.cap)
       ))
     );
 
-    const hint = e('div', { style: { textAlign: 'center', marginTop: '16px', fontSize: '11px', letterSpacing: '0.16em', color: '#c8c2b7' } }, '⟵  スワイプで前後の卦へ  ⟶');
+    const hint = e('div', { style: { textAlign: 'center', marginTop: '13px', fontSize: '11px', letterSpacing: '0.1em', color: '#706b63' } }, 'タブ、または左右スワイプで見比べられます');
 
     const SR = { position: 'absolute', width: '1px', height: '1px', padding: 0, margin: '-1px', overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap', border: 0 };
     const live = e('div', { 'aria-live': 'polite', style: SR }, cells[fi] ? (cells[fi].label + '、' + cells[fi].hex.name + '、第' + cells[fi].hex.num + '卦') : '');
@@ -2127,7 +2273,7 @@ class App extends React.Component {
         e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.03em', lineHeight: 1.7 } }, yao.text)
       ),
       yao.meaning ? e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 6px', textWrap: 'pretty' } }, yao.meaning) : null,
-      yao.advice ? e('p', { style: { fontSize: '13px', lineHeight: 1.9, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, yao.advice) : null
+      yao.advice ? e('p', { style: { fontSize: '13px', lineHeight: 1.9, color: '#706b63', margin: 0, textWrap: 'pretty' } }, yao.advice) : null
     );
 
     const rows = [];
@@ -2143,7 +2289,7 @@ class App extends React.Component {
 
     return e('div', { style: { marginTop: '30px', borderTop: '1px solid #f1efe9', paddingTop: '26px' } },
       e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '19px', color: '#2b2823', margin: '0 0 6px', letterSpacing: '0.03em' } }, '動いた爻'),
-      e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#aaa49a', margin: '0 0 20px' } }, '変化している線に添えられた言葉です。いまの段階を、より細かく映します。'),
+      e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#706b63', margin: '0 0 20px' } }, '変化している線に添えられた言葉です。いまの段階を、より細かく映します。'),
       rows
     );
   }
@@ -2167,7 +2313,7 @@ class App extends React.Component {
           'aria-label': term + '（' + g.yomi + '）の意味',
           onKeyDown: (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); open(ev); } },
           style: { cursor: 'pointer', borderBottom: '1px dotted ' + this.hexToRgba(accent, 0.55) },
-        }, term, e('rt', { style: { fontSize: '0.5em', color: '#9aa0b8', fontWeight: 400, letterSpacing: 0 } }, g.yomi)));
+        }, term, e('rt', { style: { fontSize: '0.5em', color: '#676d82', fontWeight: 400, letterSpacing: 0 } }, g.yomi)));
         i += term.length;
       } else { buf += text[i]; i++; }
     }
@@ -2288,7 +2434,7 @@ class App extends React.Component {
     const lt = s.lastThrow;
     const throwReadout = (s.screen === 'cast' && lt && !s.tossing)
       ? e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '9px' } },
-          lt.faces.map((f, i) => e('span', { key: i, style: { fontFamily: "'Shippori Mincho', serif", fontSize: '13px', letterSpacing: '0.06em', color: f ? '#2f3a6e' : '#aaa49a' } }, f ? '表' : '裏')),
+          lt.faces.map((f, i) => e('span', { key: i, style: { fontFamily: "'Shippori Mincho', serif", fontSize: '13px', letterSpacing: '0.06em', color: f ? '#2f3a6e' : '#706b63' } }, f ? '表' : '裏')),
           e('span', { style: { color: '#d8d3c8', fontSize: '12px' } }, '→'),
           e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.04em' } }, (lt.value === 1 ? '陽' : '陰') + (lt.changing ? ' · 動爻' : ''))
         )
@@ -2323,7 +2469,7 @@ class App extends React.Component {
       ripple,
       buildingHex,
       throwReadout,
-      counter: `${s.casts.length} / 6`,
+      counter: s.casts.length >= 6 ? '六本そろいました' : `あと ${6 - s.casts.length} 回`,
       castDone: s.casts.length >= 6,
       showTapHint: s.screen === 'cast' && !s.everTossed,
       autoCasting: s.autoCasting,
@@ -2332,7 +2478,7 @@ class App extends React.Component {
       kicker: '今回の見立て',
       para1: '', para2: '', transitionText: '', closing: '',
       isPresentFocus: false, showFocusNote: false,
-      aiResult: null, aiLoading: false, aiSlow: false, aiError: '', aiRevealed: false, aiButton: false, aiChip: '',
+      aiResult: null, aiLoading: false, aiSlow: false, aiError: '', aiRevealed: false, aiButton: false, aiChip: '', aiButtonLabel: '',
       present: null,
     };
 
@@ -2344,12 +2490,14 @@ class App extends React.Component {
       this.changing = s.casts.map(c => c.changing);
       const changingCount = this.changing.filter(Boolean).length;
       const ctx = { present, future, past, changingCount, question: s.question };
-      const cells = [
-        { role: 'past', label: '前回の卦', kicker: '前回の見立て', cap: 'これまで', hex: past, interp: this.buildInterpFor(past, 'past', ctx) },
-        { role: 'present', label: '今回の卦', kicker: '今回の見立て', cap: 'いま', hex: present, interp: this.buildInterpFor(present, 'present', ctx) },
-        { role: 'future', label: '次に進む卦', kicker: '次の見立て', cap: 'これから', hex: future, interp: this.buildInterpFor(future, 'future', ctx) },
-      ];
-      const fi = Math.max(0, Math.min(2, s.focusIndex));
+      const cells = [];
+      if (s.pastLines && s.pastLines.length === 6) cells.push({ role: 'past', label: '前回の占い', kicker: '前回の見立て', cap: '前回', hex: past, interp: this.buildInterpFor(past, 'past', ctx) });
+      cells.push(
+        { role: 'present', label: '今回の卦', kicker: '今回の見立て', cap: '今回', hex: present, interp: this.buildInterpFor(present, 'present', ctx) },
+        { role: 'future', label: '変化した先', kicker: '変化の見立て', cap: '変化後', hex: future, interp: this.buildInterpFor(future, 'future', ctx) },
+      );
+      this._carouselCount = cells.length;
+      const fi = Math.max(0, Math.min(cells.length - 1, s.focusIndex));
       out.resultTriple = this.buildCarousel(cells, fi, s.dragDX, s.dragging);
       const cur = cells[fi];
       out.kicker = cur.kicker;
@@ -2357,8 +2505,8 @@ class App extends React.Component {
       out.para2 = cur.interp.para2;
       out.transitionText = cur.interp.transitionText;
       out.closing = cur.interp.closing;
-      out.isPresentFocus = fi === 1;
-      out.showFocusNote = fi !== 1;
+      out.isPresentFocus = cur.role === 'present';
+      out.showFocusNote = cur.role !== 'present';
       // AI解釈リクエストの payload を退避（requestAI が使う）。本卦/之卦は卦名＋八卦の漢字。
       this._aiPayload = {
         question: (s.question || '').slice(0, 200),
@@ -2372,7 +2520,8 @@ class App extends React.Component {
       out.aiError = s.aiError;
       out.aiRevealed = s.aiRevealed;
       out.aiButton = !s.aiRevealed && !s.aiLoading;
-      out.aiChip = s.aiRevealed ? '今日のぶん · 完了' : '残り 1 / 日';
+      out.aiChip = s.aiRevealed ? '今日のぶん · 完了' : '本日あと1回';
+      out.aiButtonLabel = s.aiError ? 'もう一度、AI に読み解いてもらう' : 'この見立てを、AI に読み解いてもらう';
       out.present = present;
     }
 
@@ -2384,22 +2533,28 @@ class App extends React.Component {
     return e('div', { key: 'ask', style: { padding: '38px 30px 44px', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '22px' } }, '問いを立てる'),
       e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '29px', lineHeight: 1.62, color: '#2b2823', margin: '0 0 18px', letterSpacing: '0.01em' } }, 'ひとつの問いを、', e('br'), '心に想ってください。'),
-      e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#8c867d', margin: '0 0 34px', textWrap: 'pretty' } }, '答えを急がなくていい。いま、気にかかっていることを、ただ一つだけ。形にならなくても、胸のうちにあれば十分です。'),
-      e('label', { style: { display: 'block', fontSize: '12px', letterSpacing: '0.12em', color: '#aaa49a', marginBottom: '10px' } }, '書きとめておく（任意）'),
+      e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#6f6a62', margin: '0 0 34px', textWrap: 'pretty' } }, '答えを急がなくていい。いま、気にかかっていることを、ただ一つだけ。形にならなくても、胸のうちにあれば十分です。'),
+      e('label', { htmlFor: 'kz-question', style: { display: 'block', fontSize: '12px', letterSpacing: '0.12em', color: '#706b63', marginBottom: '10px' } }, '書きとめておく（任意）'),
       e('textarea', {
+        id: 'kz-question',
         className: 'kz-ta',
         value: out.question, onChange: this.setQuestion,
+        maxLength: 200,
         placeholder: 'たとえば「この仕事を続けるべきか迷っている」',
         style: { width: '100%', minHeight: '116px', border: '1px solid #ece9e3', borderRadius: '18px', padding: '16px 17px', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14.5px', lineHeight: 1.8, color: '#2b2823', background: '#fcfbf9', resize: 'none', outline: 'none' }
       }),
+      e('div', { style: { display: 'flex', justifyContent: 'space-between', gap: '12px', margin: '9px 2px 0' } },
+        e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#6f6a62', margin: 0 } }, '書かなくても占えます。入力した問いと履歴は、この端末に保存されます。'),
+        e('span', { 'aria-label': '入力文字数', style: { flex: 'none', fontSize: '11px', color: '#706b63' } }, out.question.length + '/200')
+      ),
       e('button', { onClick: this.startCast, className: 'kz-cta', style: { width: '100%', marginTop: '26px', padding: '17px', border: 'none', borderRadius: '18px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15.5px', fontWeight: 500, letterSpacing: '0.12em', cursor: 'pointer' } }, '卦を立てる'),
       e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9', display: 'flex', gap: '12px' } },
-        e('span', { style: { fontFamily: "'Shippori Mincho', serif", color: '#cfcabf', fontSize: '16px', flex: 'none', lineHeight: 1.4 } }, '作法'),
-        e('p', { style: { fontSize: '12.5px', lineHeight: 1.9, color: '#aaa49a', margin: 0 } }, '易経では、同じ問いを何度もは占いません。一度、静かに向き合うための作法です。')
+        e('span', { style: { fontFamily: "'Shippori Mincho', serif", color: '#706b63', fontSize: '16px', flex: 'none', lineHeight: 1.4 } }, '作法'),
+        e('p', { style: { fontSize: '12.5px', lineHeight: 1.9, color: '#706b63', margin: 0 } }, '易経では、同じ問いを何度もは占いません。一度、静かに向き合うための作法です。')
       ),
       e('div', { style: { marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '22px' } },
-        e('button', { onClick: () => this.go('about'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, 'はじめに'),
-        e('button', { onClick: () => this.go('reference'), style: { border: 'none', background: 'none', color: '#9aa0b8', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, '64卦をみる')
+        e('button', { onClick: () => this.go('about'), style: { border: 'none', background: 'none', color: '#676d82', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, 'はじめに'),
+        e('button', { onClick: () => this.go('reference'), style: { border: 'none', background: 'none', color: '#676d82', fontSize: '12.5px', letterSpacing: '0.12em', cursor: 'pointer', padding: '4px' } }, '64卦をみる')
       )
     );
   }
@@ -2408,10 +2563,10 @@ class App extends React.Component {
     return e('div', { key: 'cast', style: { padding: '30px 30px 40px', animation: 'kz-fade-up .6s ease both', display: 'flex', flexDirection: 'column', alignItems: 'center' } },
       e('div', { style: { width: '100%', display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' } },
         e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase' } }, '卦を立てる'),
-        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14px', color: '#b6b0a6', letterSpacing: '0.1em' } }, out.counter)
+        e('div', { role: 'status', 'aria-live': 'polite', style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14px', color: '#706b63', letterSpacing: '0.1em' } }, out.counter)
       ),
       e('h2', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '22px', lineHeight: 1.6, color: '#2b2823', margin: '14px 0 8px', textAlign: 'center' } }, '三つの石を、六度。'),
-      e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#8c867d', margin: '0 0 26px', textAlign: 'center', maxWidth: '270px' } }, '想いながら、石にふれてください。ふれるたび、線がひとつ積もります。'),
+      e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#6f6a62', margin: '0 0 26px', textAlign: 'center', maxWidth: '290px' } }, '問いを想いながら、石にふれてください。タップで一度、長押しで続けて投げます。'),
       e('div', { style: { minHeight: '188px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', marginBottom: '30px' } }, out.buildingHex),
       e('button', { type: 'button', 'aria-label': '石を投げる（押している間つづけて立てます）',
         onPointerDown: this.onCoinDown, onPointerUp: this.releaseCoin, onPointerCancel: this.releaseCoin, onLostPointerCapture: this.releaseCoin, onKeyDown: this.onCoinKey,
@@ -2421,8 +2576,8 @@ class App extends React.Component {
       ),
       e('div', { style: { height: '26px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, out.throwReadout),
       e('div', { style: { height: '22px', marginTop: '2px' } },
-        out.autoCasting ? e('p', { style: { fontSize: '12px', color: '#9aa0b8', letterSpacing: '0.14em', margin: 0 } }, '投げています…')
-          : out.showTapHint ? e('p', { style: { fontSize: '12px', color: '#c3bdb2', letterSpacing: '0.14em', margin: 0, animation: 'kz-fade .8s ease both' } }, '石にふれる（押している間つづけて）') : null
+        out.autoCasting ? e('p', { style: { fontSize: '12px', color: '#676d82', letterSpacing: '0.14em', margin: 0 } }, '投げています…')
+          : out.showTapHint ? e('p', { style: { fontSize: '12px', color: '#706b63', letterSpacing: '0.1em', margin: 0, animation: 'kz-fade .8s ease both' } }, 'タップで1回 ／ 長押しで続けて投げる') : null
       ),
       e('div', { style: { height: '64px', marginTop: '16px', display: 'flex', alignItems: 'center' } },
         out.castDone ? e('button', { onClick: this.goResult, style: { padding: '15px 44px', border: 'none', borderRadius: '16px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15px', fontWeight: 500, letterSpacing: '0.14em', cursor: 'pointer', animation: 'kz-fade-up .7s ease both' } }, '結果を見る') : null
@@ -2434,12 +2589,12 @@ class App extends React.Component {
     const para = (txt, i) => e('p', { key: i, style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 16px', textWrap: 'pretty' } }, txt);
     return e('div', { key: 'result', style: { padding: '30px 26px 48px', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '16px', textAlign: 'center' } }, out.kicker),
-      out.hasQuestion ? e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', lineHeight: 1.85, color: '#9a948b', margin: '0 0 28px', textAlign: 'center', padding: '0 8px' } }, '「' + out.question + '」') : null,
+      out.hasQuestion ? e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', lineHeight: 1.85, color: '#706b63', margin: '0 0 28px', textAlign: 'center', padding: '0 8px' } }, '「' + out.question + '」') : null,
       e('div', { style: { marginBottom: '30px' } }, out.resultTriple),
       e('div', { style: { height: '1px', background: '#f1efe9', margin: '8px 2px 26px' } }),
       e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '19px', color: '#2b2823', margin: '0 0 16px', letterSpacing: '0.03em' } }, '考え方・捉え方'),
       para(out.para1, 'p1'), para(out.para2, 'p2'), para(out.transitionText, 'pt'),
-      e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.closing),
+      e('p', { style: { fontSize: '13.5px', lineHeight: 1.95, color: '#706b63', margin: 0, textWrap: 'pretty' } }, out.closing),
       // 動いた爻の爻辞（本卦が中央のときのみ。爻辞データのある卦・変爻ありのときだけ中身が出る）
       out.isPresentFocus ? this.renderYaoSection(out.present) : null,
       // AI area (hidden when re-viewing a past reading from history)
@@ -2449,47 +2604,64 @@ class App extends React.Component {
             e('span', { style: { width: '7px', height: '7px', borderRadius: '50%', background: '#2f3a6e', display: 'inline-block' } }),
             e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', letterSpacing: '0.04em' } }, 'AI による読み解き')
           ),
-          e('span', { style: { fontSize: '10.5px', letterSpacing: '0.1em', color: '#9aa0b8' } }, out.aiChip)
+          e('span', { style: { fontSize: '10.5px', letterSpacing: '0.1em', color: '#676d82' } }, out.aiChip)
         ),
         out.aiLoading ? e('div', { key: 'ail', style: { textAlign: 'center' } },
-          e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#9aa0b8', margin: 0 } }, '読み解いています…'),
-          out.aiSlow ? e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#b8bcc9', margin: '8px 0 0' } }, '（初回は起動に少し時間がかかることがあります）') : null
+          e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#676d82', margin: 0 } }, '読み解いています…'),
+          out.aiSlow ? e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#676d82', margin: '8px 0 0' } }, '初回は起動に少し時間がかかることがあります。結果画面はこのままお読みいただけます。') : null,
+          e('button', { onClick: this.cancelAI, style: { marginTop: '12px', border: 'none', background: 'none', color: '#676d82', fontSize: '12px', padding: '8px 12px', cursor: 'pointer' } }, '読み解きを中止する')
         ) : null,
-        (out.aiError && !out.aiLoading) ? e('p', { key: 'aie', style: { fontSize: '13.5px', lineHeight: 1.95, color: '#9a948b', margin: 0, textWrap: 'pretty' } }, out.aiError) : null,
+        (out.aiError && !out.aiLoading) ? e('p', { key: 'aie', style: { fontSize: '13.5px', lineHeight: 1.95, color: '#706b63', margin: 0, textWrap: 'pretty' } }, out.aiError) : null,
         (out.aiResult && !out.aiLoading) ? e('div', { key: 'air', style: { animation: 'kz-fade .8s ease both' } },
           this.renderAiPart('本卦', out.aiResult.honka ? (out.aiResult.honka.name + (out.aiResult.honka.reading ? '（' + out.aiResult.honka.reading + '）' : '')) : null, out.aiResult.honka ? out.aiResult.honka.interpretation : null),
           out.aiResult.yao ? this.renderAiPart('動爻', out.aiResult.yao.name, out.aiResult.yao.interpretation) : null,
           out.aiResult.shika ? this.renderAiPart('之卦', out.aiResult.shika.name, out.aiResult.shika.interpretation) : null,
           out.aiResult.advice ? this.renderAiPart('捉え方', null, out.aiResult.advice) : null
         ) : null,
-        (out.aiRevealed && !out.aiResult && !out.aiError && !out.aiLoading) ? e('p', { key: 'aidone', style: { fontSize: '13px', lineHeight: 1.9, color: '#aab0c4', margin: 0, textAlign: 'center' } }, '今日のぶんの読み解きは、もう受け取りました。また明日、別の景色を。') : null,
+        (out.aiRevealed && !out.aiResult && !out.aiError && !out.aiLoading) ? e('p', { key: 'aidone', style: { fontSize: '13px', lineHeight: 1.9, color: '#676d82', margin: 0, textAlign: 'center' } }, '今日のぶんの読み解きは、もう受け取りました。次回は明日0:00（日本時間）からご利用いただけます。') : null,
         out.aiButton ? e(React.Fragment, null,
-          e('button', { onClick: this.requestAI, className: 'kz-ai', style: { width: '100%', padding: '14px', border: '1px solid #2f3a6e', borderRadius: '14px', background: '#ffffff', color: '#2f3a6e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', fontWeight: 500, letterSpacing: '0.1em', cursor: 'pointer' } }, 'この見立てを、AI に読み解いてもらう'),
-          e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#aab0c4', margin: '12px 0 0', textAlign: 'center' } }, '無料プランは一日にひとつ。今日のぶんが、ここにあります。')
+          e('button', { onClick: this.requestAI, className: 'kz-ai', style: { width: '100%', padding: '14px', border: '1px solid #2f3a6e', borderRadius: '14px', background: '#ffffff', color: '#2f3a6e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', fontWeight: 500, letterSpacing: '0.08em', cursor: 'pointer' } }, out.aiButtonLabel),
+          e('p', { style: { fontSize: '11.5px', lineHeight: 1.7, color: '#676d82', margin: '12px 0 0', textAlign: 'center' } }, 'AI読み解きを使う場合のみ、入力した問いと卦の情報を送信します。1日1回ご利用いただけます。')
         ) : null
       ) : null,
-      (out.isPresentFocus && out.viewing) ? e('p', { style: { marginTop: '28px', fontSize: '12.5px', lineHeight: 1.9, color: '#aab0c4', textAlign: 'center', padding: '0 14px' } }, 'AI による読み解きは、新しい占いでご利用ください。') : null,
-      out.showFocusNote ? e('p', { style: { marginTop: '28px', fontSize: '12.5px', lineHeight: 1.9, color: '#aab0c4', textAlign: 'center', padding: '0 14px' } }, 'AI の読み解きは「今回の卦」に添えています。中央へ戻すと、ここに表示されます。') : null,
+      (out.isPresentFocus && out.viewing) ? e('p', { style: { marginTop: '28px', fontSize: '12.5px', lineHeight: 1.9, color: '#676d82', textAlign: 'center', padding: '0 14px' } }, 'AI による読み解きは、新しい占いでご利用ください。') : null,
+      out.showFocusNote ? e('p', { style: { marginTop: '28px', fontSize: '12.5px', lineHeight: 1.9, color: '#676d82', textAlign: 'center', padding: '0 14px' } }, 'AI の読み解きは「今回の卦」に添えています。中央へ戻すと、ここに表示されます。') : null,
       // share actions
       e('div', { style: { marginTop: '30px', display: 'flex', gap: '12px' } },
-        e('button', { onClick: this.shareReading, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, 'シェア'),
-        e('button', { onClick: this.saveImage, style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '画像を保存')
+        e('button', { onClick: () => this.openShareOptions('share'), style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, 'シェア'),
+        e('button', { onClick: () => this.openShareOptions('save'), style: { flex: 1, padding: '13px', border: '1px solid #e3e0d9', borderRadius: '14px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '13.5px', letterSpacing: '0.08em', cursor: 'pointer' } }, '画像を保存')
       ),
       // again
       e('div', { style: { marginTop: '34px', paddingTop: '24px', borderTop: '1px solid #f1efe9', textAlign: 'center' } },
         e('button', { onClick: this.again, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '別の問いを立てる'),
-        e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#b6b0a6', margin: '16px 0 0' } }, '同じ問いは、一度きり。次は、別の問いを。')
+        e('p', { style: { fontSize: '12px', lineHeight: 1.85, color: '#706b63', margin: '16px 0 0' } }, '同じ問いは、一度きり。次は、別の問いを。')
       )
     );
   }
 
   // ---- shared bottom-sheet shell (backdrop + sheet + handle + 閉じる) ----
-  renderSheet(onClose, zIndex, content) {
-    return e('div', { onClick: onClose, style: { position: 'absolute', inset: 0, zIndex: zIndex, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
-      e('div', { onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 20px calc(22px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
-        e('div', { style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 18px' } }),
+  closeTopSheet = () => {
+    if (this.state.confirmClearOpen) return this.setState({ confirmClearOpen: false });
+    if (this.state.shareOpen) return this.setState({ shareOpen: false });
+    if (this.state.aiConsentOpen) return this.setState({ aiConsentOpen: false });
+    if (this.state.glossTerm) return this.setState({ glossTerm: null });
+    if (this.state.menuOpen) return this.closeMenu();
+  };
+  onSheetKey = (ev) => {
+    if (ev.key === 'Escape') { ev.preventDefault(); this.closeTopSheet(); return; }
+    if (ev.key !== 'Tab' || !this._sheetNode) return;
+    const items = Array.from(this._sheetNode.querySelectorAll('button:not([disabled]), input:not([disabled]), [href], [tabindex]:not([tabindex="-1"])'));
+    if (!items.length) { ev.preventDefault(); return; }
+    const first = items[0], last = items[items.length - 1];
+    if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+    else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+  };
+  renderSheet(onClose, zIndex, content, label) {
+    return e('div', { onClick: onClose, role: 'presentation', style: { position: 'absolute', inset: 0, zIndex: zIndex, background: 'rgba(40,36,30,0.28)', display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', animation: 'kz-fade .25s ease both' } },
+      e('div', { ref: (node) => { this._sheetNode = node; }, role: 'dialog', 'aria-modal': 'true', 'aria-label': label || 'メニュー', tabIndex: -1, onKeyDown: this.onSheetKey, onClick: (ev) => ev.stopPropagation(), style: { background: '#f4f2ec', borderTopLeftRadius: '26px', borderTopRightRadius: '26px', padding: '18px 20px calc(22px + env(safe-area-inset-bottom))', animation: 'kz-fade-up .3s ease both' } },
+        e('div', { 'aria-hidden': 'true', style: { width: '40px', height: '4px', borderRadius: '2px', background: '#d8d3c8', margin: '2px auto 18px' } }),
         content,
-        e('button', { onClick: onClose, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#9a948b', fontSize: '13px', padding: '14px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
+        e('button', { onClick: onClose, style: { display: 'block', width: '100%', textAlign: 'center', border: 'none', background: 'none', color: '#706b63', fontSize: '13px', padding: '14px 0 2px', cursor: 'pointer', letterSpacing: '0.1em' } }, '閉じる')
       )
     );
   }
@@ -2498,14 +2670,54 @@ class App extends React.Component {
   renderMenu(out) {
     const item = (label, sub, onClick) => e('button', { key: label, onClick, style: { display: 'block', width: '100%', textAlign: 'left', border: 'none', background: '#ffffff', borderRadius: '14px', padding: '15px 18px', marginBottom: '10px', cursor: 'pointer' } },
       e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', color: '#2b2823', letterSpacing: '0.06em' } }, label),
-      sub ? e('div', { style: { fontSize: '11.5px', color: '#aaa49a', marginTop: '4px', letterSpacing: '0.04em' } }, sub) : null
+      sub ? e('div', { style: { fontSize: '11.5px', color: '#706b63', marginTop: '4px', letterSpacing: '0.04em' } }, sub) : null
     );
     return this.renderSheet(this.closeMenu, 50, e(React.Fragment, null,
       item('占う', 'あたらしい問いを立てる', this.again),
       item('占い履歴', 'これまでの見立てをふり返る', () => this.go('history')),
       item('64卦をみる', '六十四卦の辞典', () => this.go('reference')),
       item('はじめに・免責', 'このサイトについて', () => this.go('about'))
-    ));
+    ), 'メニュー');
+  }
+
+  renderAIConsent() {
+    return this.renderSheet(() => this.setState({ aiConsentOpen: false }), 70, e(React.Fragment, null,
+      e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '19px', color: '#2b2823', textAlign: 'center', marginBottom: '14px' } }, 'AI読み解きについて'),
+      e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#4a4640', margin: '0 4px 18px', textAlign: 'center' } }, '入力した問いと卦の情報を、読み解きのためサーバーへ送信します。占い履歴全体は送信しません。'),
+      e('button', { onClick: this.confirmAIConsent, className: 'kz-cta', style: { width: '100%', padding: '15px', border: 'none', borderRadius: '14px', background: '#2f3a6e', color: '#fff', fontSize: '14px', fontWeight: 500, letterSpacing: '0.08em', cursor: 'pointer' } }, '送信して読み解く')
+    ), 'AI読み解きについて');
+  }
+
+  renderShareOptions() {
+    const isSave = this.state.shareMode === 'save';
+    const hasQuestion = !!(this.state.question && this.state.question.trim());
+    const present = this.state.casts.length === 6 ? this._present() : null;
+    return this.renderSheet(() => this.setState({ shareOpen: false }), 70, e(React.Fragment, null,
+      e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '19px', color: '#2b2823', textAlign: 'center', marginBottom: '10px' } }, isSave ? '画像に含める内容' : 'シェアする内容'),
+      e('p', { style: { fontSize: '12.5px', lineHeight: 1.8, color: '#706b63', margin: '0 4px 16px', textAlign: 'center' } }, '卦の名前と見立てを' + (isSave ? '画像に保存します。' : '共有します。') + '問いは初期設定では含まれません。'),
+      present ? e('div', { style: { background: '#fff', border: '1px solid #e3e0d9', borderRadius: '14px', padding: '13px 15px', marginBottom: '12px' } },
+        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.12em', color: '#706b63', marginBottom: '7px' } }, 'プレビュー'),
+        this.state.shareIncludeQuestion && hasQuestion ? e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '12.5px', lineHeight: 1.7, color: '#706b63', marginBottom: '7px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' } }, '「' + this.state.question.trim() + '」') : null,
+        e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823' } }, '今回の卦は『' + present.name + '』（第' + present.num + '卦）')
+      ) : null,
+      hasQuestion ? e('label', { style: { display: 'flex', alignItems: 'flex-start', gap: '12px', background: '#fff', borderRadius: '14px', padding: '14px 16px', marginBottom: '14px', cursor: 'pointer' } },
+        e('input', { type: 'checkbox', checked: this.state.shareIncludeQuestion, onChange: (ev) => this.setState({ shareIncludeQuestion: ev.target.checked }), style: { width: '20px', height: '20px', margin: '1px 0 0', accentColor: '#2f3a6e', flex: 'none' } }),
+        e('span', null,
+          e('span', { style: { display: 'block', fontSize: '14px', color: '#2b2823' } }, '問いを含める'),
+          e('span', { style: { display: 'block', fontSize: '11.5px', lineHeight: 1.6, color: '#706b63', marginTop: '3px' } }, '個人的な内容が含まれていないかご確認ください。')
+        )
+      ) : null,
+      e('button', { onClick: this.confirmShareOptions, className: 'kz-cta', style: { width: '100%', padding: '15px', border: 'none', borderRadius: '14px', background: '#2f3a6e', color: '#fff', fontSize: '14px', fontWeight: 500, letterSpacing: '0.08em', cursor: 'pointer' } }, isSave ? 'この内容で画像を作る' : 'この内容でシェアする')
+    ), isSave ? '画像に含める内容' : 'シェアする内容');
+  }
+
+  renderClearConfirmation() {
+    const count = this.loadHistory().length;
+    return this.renderSheet(() => this.setState({ confirmClearOpen: false }), 70, e(React.Fragment, null,
+      e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '19px', color: '#2b2823', textAlign: 'center', marginBottom: '12px' } }, '履歴をすべて消しますか？'),
+      e('p', { style: { fontSize: '13px', lineHeight: 1.8, color: '#706b63', margin: '0 4px 18px', textAlign: 'center' } }, count + '件の記録をこの端末から削除します。この操作は元に戻せません。'),
+      e('button', { onClick: this.confirmClearHistory, style: { width: '100%', padding: '14px', border: '1px solid #8b4a43', borderRadius: '14px', background: '#fff', color: '#7a3731', fontSize: '14px', fontWeight: 500, cursor: 'pointer' } }, 'すべて削除する')
+    ), '履歴の全削除確認');
   }
 
   // ---- glossary definition sheet (tap a classical term) ----
@@ -2515,10 +2727,10 @@ class App extends React.Component {
     if (!g) return null;
     const close = () => this.setState({ glossTerm: null });
     return this.renderSheet(close, 55, e(React.Fragment, null,
-      e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#9aa0b8', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
+      e('div', { style: { fontSize: '12px', letterSpacing: '0.16em', color: '#676d82', textAlign: 'center', marginBottom: '6px' } }, g.yomi),
       e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '26px', color: '#2b2823', textAlign: 'center', letterSpacing: '0.06em', marginBottom: '16px' } }, term),
       e('p', { style: { fontSize: '14.5px', lineHeight: 1.95, color: '#4a4640', margin: '0 0 4px', textAlign: 'center', textWrap: 'pretty' } }, g.mean)
-    ));
+    ), term + 'の意味');
   }
 
   // ---- about / disclaimer ----
@@ -2537,9 +2749,11 @@ class App extends React.Component {
       h('免責事項'),
       p('本サイトの占いおよび解説は、娯楽および内省のための情報提供を目的としたものです。結果は将来を保証・予言するものではありません。医療・法律・金銭・進路など重要な判断は、専門家にご相談のうえ、ご自身の責任で行ってください。', 'd1'),
       p('本サイトの利用によって生じたいかなる損害についても、制作者は責任を負いかねます。あなたの問いに答えを出すのは、占いではなく、あなた自身です。', 'd2'),
-      p('入力した問いや占い履歴は、お使いの端末（ブラウザ）内にのみ保存され、外部のサーバーへ送信されることはありません。', 'd3'),
+      h('入力内容と通信について'),
+      p('入力した問いと占い履歴は、お使いの端末（ブラウザ）内に保存されます。AI読み解きを利用した場合に限り、入力した問いと卦の情報を読み解き用サーバーへ送信します。占い履歴全体は送信しません。', 'd3'),
+      p('本サイトでは、利用状況を把握して改善するためGoogle Analyticsを使用しています。入力した問いや占い履歴をアクセス解析へ送信する実装ではありません。', 'd4'),
       e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9', textAlign: 'center' } },
-        e('button', { onClick: this.again, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '占いに戻る')
+        e('button', { onClick: this.onBack, className: 'kz-ghost', style: { padding: '14px 36px', border: '1px solid #e3e0d9', borderRadius: '16px', background: '#ffffff', color: '#6b665e', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', letterSpacing: '0.1em', cursor: 'pointer' } }, '前の画面に戻る')
       )
     );
   }
@@ -2548,7 +2762,7 @@ class App extends React.Component {
   renderPlaceholder(kicker, msg) {
     return e('div', { key: 'ph', style: { padding: '60px 30px', textAlign: 'center', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '18px' } }, kicker),
-      e('p', { style: { fontSize: '14px', color: '#9a948b' } }, msg)
+      e('p', { style: { fontSize: '14px', color: '#706b63' } }, msg)
     );
   }
   // ---- history / journal ----
@@ -2561,7 +2775,7 @@ class App extends React.Component {
     if (!hist.length) {
       return e('div', { key: 'hist', style: { padding: '30px 28px 48px', animation: 'kz-fade-up .6s ease both' } },
         head,
-        e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#9a948b', margin: '0 0 26px' } }, 'まだ記録がありません。ひとつ、問いを立ててみましょう。記録はこの端末の中だけに残ります。'),
+        e('p', { style: { fontSize: '14px', lineHeight: 2.0, color: '#706b63', margin: '0 0 26px' } }, 'まだ記録がありません。ひとつ、問いを立ててみましょう。記録はこの端末の中だけに残ります。'),
         e('button', { onClick: this.again, className: 'kz-cta', style: { width: '100%', padding: '16px', border: 'none', borderRadius: '18px', background: '#2f3a6e', color: '#ffffff', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '15px', fontWeight: 500, letterSpacing: '0.12em', cursor: 'pointer' } }, '占う')
       );
     }
@@ -2573,31 +2787,32 @@ class App extends React.Component {
         e('button', { onClick: () => this.viewReading(rec), style: { display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', padding: '2px 0' } },
           e('div', { style: { width: '44px', flex: 'none', display: 'flex', justifyContent: 'center' } }, mini),
           e('div', { style: { minWidth: 0 } },
-            e('div', { style: { fontSize: '10.5px', color: '#b6b0a6', letterSpacing: '0.08em', marginBottom: '4px' } }, rec.date + ' · 第' + rec.present.num + '卦'),
+            e('div', { style: { fontSize: '10.5px', color: '#706b63', letterSpacing: '0.08em', marginBottom: '4px' } }, rec.date + ' · 第' + rec.present.num + '卦'),
             e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', color: '#2b2823', letterSpacing: '0.04em' } }, rec.present.name),
-            e('div', { style: { fontSize: '12px', color: '#9a948b', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, qx)
+            e('div', { style: { fontSize: '12px', color: '#706b63', marginTop: '3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, qx)
           )
         ),
-        e('button', { onClick: () => this.deleteReading(rec.id), 'aria-label': 'この記録を削除', style: { flex: 'none', border: 'none', background: 'none', color: '#cfcabf', fontSize: '18px', lineHeight: 1, padding: '8px', cursor: 'pointer' } }, '×')
+        e('button', { onClick: () => this.deleteReading(rec.id), 'aria-label': 'この記録を削除', style: { flex: 'none', border: 'none', background: 'none', color: '#706b63', fontSize: '18px', lineHeight: 1, padding: '8px', cursor: 'pointer' } }, '×')
       );
     });
     return e('div', { key: 'hist', style: { padding: '30px 26px 48px', animation: 'kz-fade-up .6s ease both' } },
       head,
       e('div', null, rows),
       e('div', { style: { marginTop: '26px', textAlign: 'center' } },
-        e('button', { onClick: this.clearHistory, style: { border: 'none', background: 'none', color: '#b6b0a6', fontSize: '12.5px', letterSpacing: '0.1em', cursor: 'pointer', padding: '6px' } }, '履歴をすべて消す')
+        e('button', { onClick: this.clearHistory, style: { border: 'none', background: 'none', color: '#706b63', fontSize: '12.5px', letterSpacing: '0.1em', cursor: 'pointer', padding: '6px' } }, '履歴をすべて消す')
       )
     );
   }
 
   // ---- reference: browsable 64 hexagrams ----
   renderReference(out) {
-    const q = (this.state.refQuery || '').trim();
+    const rawQuery = (this.state.refQuery || '').trim();
+    const q = rawQuery.normalize('NFKC').toLowerCase();
     const items = [];
     for (let n = 1; n <= 64; n++) {
       const h = this.hexContent(n);
       if (q) {
-        const hay = `${n} 第${n}卦 ${h.name || ''} ${h.reading || ''} ${(h.keywords || []).join(' ')}`;
+        const hay = `${n} 第${n}卦 ${h.name || ''} ${h.reading || ''} ${(h.keywords || []).join(' ')}`.normalize('NFKC').toLowerCase();
         if (hay.indexOf(q) === -1) continue;
       }
       items.push(n);
@@ -2608,15 +2823,17 @@ class App extends React.Component {
       return e('button', { key: n, onClick: () => this.go('detail', { detailNum: n }), style: { display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', border: '1px solid #efece6', borderRadius: '16px', background: '#fcfbf9', padding: '16px 8px 14px', cursor: 'pointer' } },
         e('div', { style: { minHeight: '64px', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, hexEl),
         e('div', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '14px', color: '#2b2823', marginTop: '12px', letterSpacing: '0.04em' } }, h.name),
-        e('div', { style: { fontSize: '10px', color: '#c3bdb2', marginTop: '4px', letterSpacing: '0.08em' } }, '第' + n + '卦')
+        e('div', { style: { fontSize: '10px', color: '#706b63', marginTop: '4px', letterSpacing: '0.08em' } }, '第' + n + '卦')
       );
     };
     return e('div', { key: 'ref', style: { padding: '24px 22px 48px', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '14px' } }, '64卦をみる'),
       e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '25px', lineHeight: 1.5, color: '#2b2823', margin: '0 0 18px' } }, '六十四卦'),
-      e('input', { className: 'kz-ta', value: this.state.refQuery, onChange: this.setRefQuery, placeholder: '卦名・キーワードでさがす', style: { width: '100%', border: '1px solid #ece9e3', borderRadius: '14px', padding: '12px 15px', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', color: '#2b2823', background: '#fcfbf9', outline: 'none', marginBottom: '20px' } }),
+      e('label', { htmlFor: 'kz-hex-search', style: { display: 'block', fontSize: '12px', letterSpacing: '0.08em', color: '#706b63', margin: '0 2px 8px' } }, '卦名・読み・キーワードで検索'),
+      e('input', { id: 'kz-hex-search', type: 'search', className: 'kz-ta', value: this.state.refQuery, onChange: this.setRefQuery, placeholder: '例：乾、けん、前進', style: { width: '100%', border: '1px solid #d8d3c8', borderRadius: '14px', padding: '12px 15px', fontFamily: "'Zen Kaku Gothic New', sans-serif", fontSize: '14px', color: '#2b2823', background: '#fcfbf9', outline: 'none', marginBottom: '8px' } }),
+      e('div', { role: 'status', 'aria-live': 'polite', style: { fontSize: '11.5px', color: '#706b63', textAlign: 'right', margin: '0 2px 14px' } }, items.length + '件'),
       items.length ? e('div', { style: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' } }, items.map(cell))
-                   : e('p', { style: { fontSize: '13.5px', color: '#9a948b', textAlign: 'center', padding: '30px 0' } }, '「' + q + '」に該当する卦は見つかりませんでした。')
+                   : e('p', { style: { fontSize: '13.5px', color: '#706b63', textAlign: 'center', padding: '30px 0' } }, '「' + rawQuery + '」に該当する卦は見つかりませんでした。')
     );
   }
 
@@ -2629,26 +2846,26 @@ class App extends React.Component {
     const hexEl = this.renderHexagram(lines.map((v) => ({ v })), { style: CONFIG.HEX_STYLE, w: 104 });
     const chip = (t) => e('span', { key: t, style: { fontSize: '11.5px', color: '#5a6184', background: '#eef0f6', borderRadius: '999px', padding: '5px 12px', letterSpacing: '0.06em' } }, t);
     const tri = (label, t) => e('div', { style: { display: 'flex', alignItems: 'baseline', gap: '10px' } },
-      e('span', { style: { fontSize: '10.5px', color: '#aaa49a', letterSpacing: '0.14em', width: '38px', flex: 'none' } }, label),
+      e('span', { style: { fontSize: '10.5px', color: '#706b63', letterSpacing: '0.14em', width: '38px', flex: 'none' } }, label),
       e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '15px', color: '#2b2823', flex: 'none' } }, t.k + '（' + t.reading + '）'),
-      e('span', { style: { fontSize: '12px', color: '#9a948b' } }, t.e + ' ・ ' + t.gloss)
+      e('span', { style: { fontSize: '12px', color: '#706b63' } }, t.e + ' ・ ' + t.gloss)
     );
     return e('div', { key: 'detail-' + n, style: { padding: '24px 28px 48px', animation: 'kz-fade-up .6s ease both' } },
       e('div', { style: { fontSize: '11px', letterSpacing: '0.3em', color: '#2f3a6e', textTransform: 'uppercase', marginBottom: '8px', textAlign: 'center' } }, '第' + n + '卦'),
       e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '150px' } }, hexEl),
       e('h1', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '26px', color: '#2b2823', margin: '16px 0 4px', textAlign: 'center', letterSpacing: '0.05em' } }, h.name),
-      h.reading ? e('div', { style: { fontSize: '12px', color: '#b6b0a6', textAlign: 'center', letterSpacing: '0.14em', marginBottom: '16px' } }, h.reading) : null,
+      h.reading ? e('div', { style: { fontSize: '12px', color: '#706b63', textAlign: 'center', letterSpacing: '0.14em', marginBottom: '16px' } }, h.reading) : null,
       e('div', { style: { display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center', marginBottom: '24px' } }, (h.keywords || []).map(chip)),
       h.judgment ? e('div', { style: { background: '#faf9f6', border: '1px solid #f1efe9', borderRadius: '16px', padding: '16px 18px', marginBottom: '20px' } },
-        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#b6b0a6', marginBottom: '12px' } }, '卦辞'),
+        e('div', { style: { fontSize: '10.5px', letterSpacing: '0.18em', color: '#706b63', marginBottom: '12px' } }, '卦辞'),
         e('p', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '16px', lineHeight: 2.3, color: '#3a352e', margin: 0 } }, this.annotateClassical(h.judgment)),
-        e('div', { style: { fontSize: '10.5px', color: '#c3bdb2', marginTop: '12px', letterSpacing: '0.06em' } }, '点線の語をタップすると、読みと意味が出ます。')
+        e('div', { style: { fontSize: '10.5px', color: '#706b63', marginTop: '12px', letterSpacing: '0.06em' } }, '点線の語をタップすると、読みと意味が出ます。')
       ) : null,
       h.summary ? e('p', { style: { fontSize: '14.5px', lineHeight: 2.0, color: '#4a4640', margin: '0 0 22px', textWrap: 'pretty' } }, h.summary) : null,
       e('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px', padding: '16px 0', borderTop: '1px solid #f1efe9', borderBottom: '1px solid #f1efe9', marginBottom: '22px' } },
         tri('上卦', hx.upper),
         tri('下卦', hx.lower),
-        h.image ? e('div', { style: { fontSize: '12.5px', lineHeight: 2.0, color: '#9a948b', marginTop: '4px', letterSpacing: '0.04em' } }, '象 — ', this.annotateClassical(h.image)) : null
+        h.image ? e('div', { style: { fontSize: '12.5px', lineHeight: 2.0, color: '#706b63', marginTop: '4px', letterSpacing: '0.04em' } }, '象 — ', this.annotateClassical(h.image)) : null
       ),
       h.advice ? e(React.Fragment, null,
         e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 12px', letterSpacing: '0.03em' } }, '読み方・心がけ'),
@@ -2657,7 +2874,7 @@ class App extends React.Component {
       // 六爻 — 爻辞（データのある卦のみ。下から上へ全6本＋必要なら用九／用六）
       h.lines ? e('div', { style: { marginTop: '30px', paddingTop: '22px', borderTop: '1px solid #f1efe9' } },
         e('h3', { style: { fontFamily: "'Shippori Mincho', serif", fontWeight: 500, fontSize: '16px', color: '#2b2823', margin: '0 0 4px', letterSpacing: '0.03em' } }, '六爻'),
-        e('p', { style: { fontSize: '11.5px', lineHeight: 1.8, color: '#aaa49a', margin: '0 0 16px' } }, '下から上へ、状況の段階を表す六本の言葉。'),
+        e('p', { style: { fontSize: '11.5px', lineHeight: 1.8, color: '#706b63', margin: '0 0 16px' } }, '下から上へ、状況の段階を表す六本の言葉。'),
         lines.map((v, i) => {
           const yao = h.lines[i]; if (!yao) return null;
           return e('div', { key: i, style: { padding: '12px 0', borderTop: i ? '1px solid #f4f2ec' : 'none' } },
@@ -2686,15 +2903,15 @@ class App extends React.Component {
   render() {
     const out = this.renderVals();
     const header = e('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: 'calc(22px + env(safe-area-inset-top)) 22px 14px', flex: 'none' } },
-      e('div', { style: { width: '40px', display: 'flex', alignItems: 'center' } },
-        out.notAsk ? e('button', { onClick: this.onBack, 'aria-label': 'もどる', style: { border: 'none', background: 'none', padding: '6px', margin: '-6px', cursor: 'pointer', color: '#9a948b', fontSize: '20px', lineHeight: 1 } }, '←') : null
+      e('div', { style: { width: '44px', display: 'flex', alignItems: 'center' } },
+        out.notAsk ? e('button', { onClick: this.onBack, className: 'kz-icon-button', 'aria-label': 'もどる', style: { border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#706b63', fontSize: '20px', lineHeight: 1 } }, '←') : null
       ),
-      e('div', { onClick: this.again, style: { display: 'flex', alignItems: 'baseline', gap: '8px', cursor: 'pointer' } },
+      e('button', { type: 'button', onClick: this.goHome, 'aria-label': 'ホームへ', style: { display: 'flex', alignItems: 'baseline', gap: '8px', cursor: 'pointer', border: 'none', background: 'none', padding: '8px' } },
         e('span', { style: { fontFamily: "'Shippori Mincho', serif", fontSize: '21px', color: '#2b2823', letterSpacing: '0.08em' } }, '兆'),
-        e('span', { style: { fontSize: '10px', letterSpacing: '0.32em', color: '#b6b0a6', textTransform: 'uppercase' } }, 'kizashi')
+        e('span', { style: { fontSize: '10px', letterSpacing: '0.32em', color: '#706b63', textTransform: 'uppercase' } }, 'kizashi')
       ),
-      e('div', { style: { width: '40px', display: 'flex', justifyContent: 'flex-end' } },
-        e('button', { onClick: this.toggleMenu, 'aria-label': 'メニュー', 'aria-expanded': out.menuOpen, style: { border: 'none', background: 'none', padding: '6px', margin: '-6px', cursor: 'pointer', color: '#9a948b', fontSize: '19px', lineHeight: 1 } }, '☰')
+      e('div', { style: { width: '44px', display: 'flex', justifyContent: 'flex-end' } },
+        e('button', { onClick: this.toggleMenu, className: 'kz-icon-button', 'aria-label': 'メニュー', 'aria-expanded': out.menuOpen, style: { border: 'none', background: 'none', padding: 0, cursor: 'pointer', color: '#706b63', fontSize: '19px', lineHeight: 1 } }, '☰')
       )
     );
 
@@ -2709,9 +2926,18 @@ class App extends React.Component {
 
     const scroll = e('div', { className: 'kz-scroll', style: { paddingBottom: 'env(safe-area-inset-bottom)' } }, body);
 
-    const toast = out.toast ? e('div', { style: { position: 'absolute', left: '50%', bottom: 'calc(28px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 60, background: 'rgba(43,40,35,0.92)', color: '#fff', fontSize: '13px', letterSpacing: '0.08em', padding: '11px 20px', borderRadius: '999px', animation: 'kz-fade .25s ease both', whiteSpace: 'nowrap' } }, out.toast) : null;
+    const toast = out.toast ? e('div', { role: 'status', 'aria-live': 'polite', style: { position: 'absolute', left: '50%', bottom: 'calc(28px + env(safe-area-inset-bottom))', transform: 'translateX(-50%)', zIndex: 80, background: 'rgba(43,40,35,0.94)', color: '#fff', fontSize: '13px', letterSpacing: '0.06em', padding: this.state.deletedReading ? '8px 10px 8px 18px' : '11px 20px', borderRadius: '999px', animation: 'kz-fade .25s ease both', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: '8px' } },
+      out.toast,
+      this.state.deletedReading ? e('button', { onClick: this.undoDeleteReading, style: { border: '1px solid rgba(255,255,255,.42)', borderRadius: '999px', background: 'transparent', color: '#fff', padding: '7px 11px', cursor: 'pointer', fontSize: '12px' } }, '元に戻す') : null
+    ) : null;
 
-    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll, out.menuOpen ? this.renderMenu(out) : null, this.state.glossTerm ? this.renderGloss() : null, toast));
+    return e('div', { className: 'kz-wrap' }, e('div', { className: 'kz-card' }, header, scroll,
+      out.menuOpen ? this.renderMenu(out) : null,
+      this.state.glossTerm ? this.renderGloss() : null,
+      this.state.aiConsentOpen ? this.renderAIConsent() : null,
+      this.state.shareOpen ? this.renderShareOptions() : null,
+      this.state.confirmClearOpen ? this.renderClearConfirmation() : null,
+      toast));
   }
 }
 
