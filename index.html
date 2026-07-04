@@ -74,6 +74,14 @@
     *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
     .kz-coin { transition: none !important; }
   }
+
+  /* water surface: fixed full-viewport, behind the app UI */
+  #kz-water { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; display: block; }
+  /* when water is active, let the page background show the canvas rather than a flat fill */
+  body.kz-water-on { background: #e6e3dd; }
+  .kz-wrap { position: relative; z-index: 1; }
+  /* fallback / reduced-motion: no canvas, unchanged flat look */
+  body.kz-water-off #kz-water { display: none; }
 </style>
 </head>
 <body>
@@ -85,6 +93,134 @@
 
 <script>
 /* ============================ APP ============================ */
+/* ===================== WATER LAYER (imperative, React-independent) ===================== */
+(function installWater() {
+  var reduceMotion = false;
+  try { reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+
+  // no-op fallback used when WebGL/extensions are unavailable or motion is reduced
+  function makeNoop() {
+    return { ok: false, drop: function(){}, calm: function(){}, setIntensity: function(){}, poke: function(){}, destroy: function(){} };
+  }
+
+  if (reduceMotion) { window.__kzWater = makeNoop(); return; }
+
+  // try to obtain a usable GL context + the extensions the sim needs
+  function tryContext() {
+    var canvas = document.createElement('canvas');
+    var opts = { alpha: true, antialias: false, depth: false, stencil: false, premultipliedAlpha: true, preserveDrawingBuffer: false, powerPreference: 'low-power' };
+    var gl2 = canvas.getContext('webgl2', opts);
+    if (gl2) {
+      // WebGL2 has half-float RTT built in; still need linear filtering of float textures
+      var lin2 = gl2.getExtension('OES_texture_float_linear');
+      return { gl: gl2, canvas: canvas, isGL2: true, halfType: gl2.HALF_FLOAT, linearOK: !!lin2 };
+    }
+    var gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
+    if (!gl) return null;
+    var hf = gl.getExtension('OES_texture_half_float');
+    if (!hf) return null; // no half-float RTT → bail to fallback (Canvas 2D path is out of scope per spec)
+    var hfl = gl.getExtension('OES_texture_half_float_linear');
+    return { gl: gl, canvas: canvas, isGL2: false, halfType: hf.HALF_FLOAT_OES, linearOK: !!hfl };
+  }
+
+  var ctx = null;
+  try { ctx = tryContext(); } catch (_) { ctx = null; }
+  if (!ctx) { window.__kzWater = makeNoop(); return; }
+
+  function WaterLayer(ctx) {
+    this.gl = ctx.gl;
+    this.canvas = ctx.canvas;
+    this.isGL2 = ctx.isGL2;
+    this.halfType = ctx.halfType;
+    this.linearOK = ctx.linearOK;
+    this.ok = true;
+
+    this.canvas.id = 'kz-water';
+    document.body.insertBefore(this.canvas, document.body.firstChild);
+    document.body.classList.add('kz-water-on');
+
+    this.dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    this.simSize = 256;              // ping-pong grid resolution (raised toward 512 cap after profiling)
+    this.wind = 0.0;                 // ambient liveliness (set by setIntensity)
+    this.damping = 0.996;            // wave persistence (set by setIntensity)
+    this.mode = 'idle';
+    this._pending = [];              // queued drops: {x,y,strength} in sim-space 0..1
+    this._raf = 0;
+    this._lastT = 0;
+    this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this._powerSave = false;
+
+    this._buildGL();                 // Task 2 fills this (buffers/programs/textures). Stub here.
+    this._resize();
+    this._onResize = this._resize.bind(this);
+    window.addEventListener('resize', this._onResize);
+    this._onVis = this._visibility.bind(this);
+    document.addEventListener('visibilitychange', this._onVis);
+    this._start();
+  }
+
+  // ---- lifecycle ----
+  WaterLayer.prototype._start = function () {
+    if (this._raf) return;
+    var self = this;
+    this._lastT = 0;
+    var loop = function (t) { self._raf = requestAnimationFrame(loop); self._frame(t); };
+    this._raf = requestAnimationFrame(loop);
+  };
+  WaterLayer.prototype._stop = function () {
+    if (this._raf) { cancelAnimationFrame(this._raf); this._raf = 0; }
+  };
+  WaterLayer.prototype._visibility = function () {
+    if (document.hidden) this._stop(); else this._start();
+  };
+
+  WaterLayer.prototype._resize = function () {
+    var w = Math.round(window.innerWidth * this.dpr);
+    var h = Math.round(window.innerHeight * this.dpr);
+    if (this.canvas.width === w && this.canvas.height === h) return;
+    this.canvas.width = w; this.canvas.height = h;
+    this.canvas.style.width = window.innerWidth + 'px';
+    this.canvas.style.height = window.innerHeight + 'px';
+    this.gl.viewport(0, 0, w, h);
+  };
+
+  // ---- stubs replaced in later tasks ----
+  WaterLayer.prototype._buildGL = function () { /* Task 2: create quad buffer, sim + render programs, ping-pong FBOs */ };
+  WaterLayer.prototype._simStep = function () { /* Task 2: run one ping-pong height-field update */ };
+  WaterLayer.prototype._render = function () {
+    // Task 3 replaces this with the water render pass. Placeholder: clear to a translucent water tint.
+    var gl = this.gl;
+    gl.clearColor(0.945, 0.933, 0.902, 1.0); // ~#f1eee6
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  };
+  WaterLayer.prototype._frame = function (t) {
+    if (!this._lastT) this._lastT = t;
+    this._lastT = t;
+    // power-save: after 6s of no interaction, ease into idle shimmer
+    var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this._powerSave = (now - this._idleSince) > 6000;
+    this._simStep();
+    this._render();
+  };
+
+  // ---- public API (stubbed here; filled by later tasks) ----
+  WaterLayer.prototype.drop = function (/* xCss, yCss, strength */) { /* Task 4 */ this.poke(); };
+  WaterLayer.prototype.calm = function () { /* Task 4 */ };
+  WaterLayer.prototype.setIntensity = function (/* mode */) { /* Task 4 */ };
+  WaterLayer.prototype.poke = function () { this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now()); this._powerSave = false; };
+  WaterLayer.prototype.destroy = function () {
+    this._stop();
+    try { window.removeEventListener('resize', this._onResize); } catch (_) {}
+    try { document.removeEventListener('visibilitychange', this._onVis); } catch (_) {}
+    try { document.body.classList.remove('kz-water-on'); } catch (_) {}
+    try { if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas); } catch (_) {}
+    this.gl = null; this.canvas = null;
+  };
+
+  try { window.__kzWater = new WaterLayer(ctx); }
+  catch (_) { window.__kzWater = makeNoop(); }
+})();
+
 const e = React.createElement;
 
 const CONFIG = {
@@ -326,6 +462,7 @@ class App extends React.Component {
   };
 
   componentDidMount() {
+    this.water = window.__kzWater || { ok: false, drop(){}, calm(){}, setIntensity(){}, poke(){}, destroy(){} };
     window.addEventListener('popstate', this._onPopState);
     // migrate a legacy single kz_prev into the history array
     try {
@@ -375,6 +512,7 @@ class App extends React.Component {
   componentWillUnmount() {
     window.removeEventListener('popstate', this._onPopState);
     if (this._aiAbort) this._aiAbort.abort();
+    if (this.water && this.water.destroy) this.water.destroy();
   }
 
   // ---- actions ----
