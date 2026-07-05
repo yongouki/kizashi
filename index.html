@@ -903,6 +903,12 @@ class App extends React.Component {
   componentDidMount() {
     this.water = window.__kzWater || { ok: false, drop(){}, calm(){}, setIntensity(){}, poke(){}, destroy(){} };
     document.addEventListener('pointerdown', this._waterPointer, { passive: true });
+    document.addEventListener('pointermove', this._waterPointerMove, { passive: true });
+    document.addEventListener('touchmove', this._waterTouchMove, { passive: true });
+    document.addEventListener('pointerup', this._waterPointerEnd, { passive: true });
+    document.addEventListener('pointercancel', this._waterPointerEnd, { passive: true });
+    document.addEventListener('touchend', this._waterTouchEnd, { passive: true });
+    document.addEventListener('touchcancel', this._waterTouchEnd, { passive: true });
     this._syncWaterIntensity();
     window.addEventListener('popstate', this._onPopState);
     // migrate a legacy single kz_prev into the history array
@@ -954,6 +960,12 @@ class App extends React.Component {
   componentWillUnmount() {
     window.removeEventListener('popstate', this._onPopState);
     document.removeEventListener('pointerdown', this._waterPointer);
+    document.removeEventListener('pointermove', this._waterPointerMove);
+    document.removeEventListener('touchmove', this._waterTouchMove);
+    document.removeEventListener('pointerup', this._waterPointerEnd);
+    document.removeEventListener('pointercancel', this._waterPointerEnd);
+    document.removeEventListener('touchend', this._waterTouchEnd);
+    document.removeEventListener('touchcancel', this._waterTouchEnd);
     if (this._aiAbort) this._aiAbort.abort();
     if (this.water && this.water.destroy) this.water.destroy();
   }
@@ -967,7 +979,53 @@ class App extends React.Component {
       this.water.poke();
       return; // let the control handle it; no ripple over UI chrome
     }
+    this._wake = { id: ev.pointerId, lastX: ev.clientX, lastY: ev.clientY };
     this.water.drop(ev.clientX, ev.clientY, 0.7);
+  };
+
+  // inject a weak ripple trail as the finger/pointer drags across the water (swipe wake)
+  _wakeMove(x, y) {
+    if (!this._wake || !this.water || !this.water.ok) return;
+    const dx = x - this._wake.lastX;
+    const dy = y - this._wake.lastY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const STEP = 28;
+    if (dist < STEP) return;
+    if (dist >= STEP * 2) {
+      // fast swipe: backfill intermediate points along the segment, capped to avoid flooding
+      const steps = Math.min(4, Math.floor(dist / STEP));
+      for (let i = 1; i <= steps; i++) {
+        const t = (i * STEP) / dist;
+        this.water.drop(this._wake.lastX + dx * t, this._wake.lastY + dy * t, 0.2);
+      }
+    } else {
+      this.water.drop(x, y, 0.2);
+    }
+    this._wake.lastX = x;
+    this._wake.lastY = y;
+  }
+
+  _waterPointerMove = (ev) => {
+    if (ev.pointerType === 'touch') return; // touchmove handles touch to survive scroll cancellation
+    if (!(ev.buttons & 1)) return;
+    this._wakeMove(ev.clientX, ev.clientY);
+  };
+
+  _waterTouchMove = (ev) => {
+    const t = ev.touches && ev.touches[0];
+    if (!t) return;
+    this._wakeMove(t.clientX, t.clientY);
+  };
+
+  // pointercancel fires on touch as soon as native scroll takes over — don't end the wake there,
+  // or the trail dies the instant a swipe turns into a scroll. touchend/touchcancel end it instead.
+  _waterPointerEnd = (ev) => {
+    if (ev.pointerType === 'touch' && ev.type === 'pointercancel') return;
+    this._wake = null;
+  };
+
+  _waterTouchEnd = () => {
+    this._wake = null;
   };
 
   _screenToWaterMode(screen) {
