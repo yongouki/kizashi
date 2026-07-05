@@ -183,6 +183,32 @@
     '  FRAG = st;\n' +
     '}\n';
 
+  // visible render pass: normal from height field, refracted gradient + indigo specular
+  var FS_WATER =
+    'IN vec2 vUv;\n' +
+    'uniform sampler2D uState;\n' +
+    'uniform vec2 uTexel;\n' +          // 1/simSize
+    'uniform vec2 uAspect;\n' +         // (canvasW/canvasH) correction for the gradient
+    'uniform vec3 uDeep;\n' +           // deep water tint
+    'uniform vec3 uShallow;\n' +        // shallow / highlight base
+    'uniform vec3 uSpec;\n' +           // specular tint (indigo)
+    'void main(){\n' +
+    '  float hL = TEX(uState, vUv + vec2(-uTexel.x, 0.0)).r;\n' +
+    '  float hR = TEX(uState, vUv + vec2( uTexel.x, 0.0)).r;\n' +
+    '  float hU = TEX(uState, vUv + vec2(0.0, -uTexel.y)).r;\n' +
+    '  float hD = TEX(uState, vUv + vec2(0.0,  uTexel.y)).r;\n' +
+    '  vec3 n = normalize(vec3(hL - hR, hU - hD, 0.10));\n' +   // z controls apparent slope scale
+    '  float h = TEX(uState, vUv).r;\n' +
+    '  vec2 ruv = vUv + n.xy * 0.9;\n' +
+    '  float grad = clamp(ruv.y, 0.0, 1.0);\n' +
+    '  vec3 base = mix(uDeep, uShallow, grad);\n' +
+    '  vec3 L = normalize(vec3(-0.4, 0.75, 0.55));\n' +
+    '  float spec = pow(max(dot(n, L), 0.0), 22.0);\n' +
+    '  vec3 col = base + uSpec * spec * 0.55;\n' +
+    '  col += vec3(h * 1.4);\n' +
+    '  FRAG = vec4(col, 1.0);\n' +
+    '}\n';
+
   function compile(gl, type, src) {
     var sh = gl.createShader(type);
     gl.shaderSource(sh, src); gl.compileShader(sh);
@@ -275,7 +301,15 @@
 
     this.progSim  = program(gl, H.vs + VS_QUAD, H.fs + FS_SIM);
     this.progDrop = program(gl, H.vs + VS_QUAD, H.fs + FS_DROP);
-    // Task 3 adds this.progWater (the visible render pass)
+    this.progWater = program(gl, H.vs + VS_QUAD, H.fs + FS_WATER);
+    this.uWater = {
+      state: gl.getUniformLocation(this.progWater, 'uState'),
+      texel: gl.getUniformLocation(this.progWater, 'uTexel'),
+      aspect: gl.getUniformLocation(this.progWater, 'uAspect'),
+      deep: gl.getUniformLocation(this.progWater, 'uDeep'),
+      shallow: gl.getUniformLocation(this.progWater, 'uShallow'),
+      spec: gl.getUniformLocation(this.progWater, 'uSpec')
+    };
 
     this.uSim = {
       state: gl.getUniformLocation(this.progSim, 'uState'),
@@ -379,20 +413,20 @@
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   };
   WaterLayer.prototype._render = function () {
-    // TEMP DEBUG (removed in Task 3): visualize height as grayscale so the sim is observable
+    if (!this._simReady) return;
     var gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-    if (!this._dbgProg) {
-      var H = shaderHeads(this.isGL2);
-      this._dbgProg = program(gl, H.vs + VS_QUAD, H.fs +
-        'IN vec2 vUv;\nuniform sampler2D uState;\nvoid main(){ float h = TEX(uState, vUv).r; float g = 0.5 + h*6.0; FRAG = vec4(g,g,g,1.0); }\n');
-      this._dbgState = gl.getUniformLocation(this._dbgProg, 'uState');
-    }
-    gl.useProgram(this._dbgProg);
+    gl.useProgram(this.progWater);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.heightTex[this.cur]);
-    gl.uniform1i(this._dbgState, 0);
+    gl.uniform1i(this.uWater.state, 0);
+    gl.uniform2f(this.uWater.texel, this._texel, this._texel);
+    gl.uniform2f(this.uWater.aspect, this.canvas.width / this.canvas.height, 1.0);
+    // palette: washi-beige base graded from a slightly deeper tone up to a paler top
+    gl.uniform3f(this.uWater.deep, 0.886, 0.878, 0.851);    // ~#e2e0d9 (trough / bottom)
+    gl.uniform3f(this.uWater.shallow, 0.957, 0.949, 0.925); // ~#f4f2ec (crest / top)
+    gl.uniform3f(this.uWater.spec, 0.184, 0.227, 0.431);    // ~#2f3a6e indigo highlight
     this._drawQuad();
   };
   WaterLayer.prototype._frame = function (t) {
@@ -428,7 +462,7 @@
   try { window.__kzWater = new WaterLayer(ctx); }
   catch (_) { window.__kzWater = makeNoop(); }
 
-  // TEMP: console harness for Task 2 verification (removed in Task 3)
+  // TEMP (removed in Task 4): allow manual drops while tap wiring is not yet in place
   if (window.__kzWater && window.__kzWater.ok) window.__kzWaterDrop = function (x, y, s) { window.__kzWater.drop(x, y, s); };
 })();
 
