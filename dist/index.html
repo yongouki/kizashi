@@ -2114,7 +2114,34 @@ class App extends React.Component {
   accent() { return CONFIG.ACCENT; }
 
   // ---- history store (localStorage, newest-first) ----
-  loadHistory() { try { return JSON.parse(localStorage.getItem('kz_history') || '[]') || []; } catch (e) { return []; } }
+  _validLines(a) { return Array.isArray(a) && a.length === 6 && a.every((v) => v === 0 || v === 1); }
+  // 破損した履歴レコード（lines不正など）を除外・修復する
+  _sanitizeReading(rec) {
+    if (!rec || typeof rec !== 'object') return null;
+    if (typeof rec.id !== 'string' || !rec.id) return null;
+    if (!this._validLines(rec.lines)) return null;
+    const out = Object.assign({}, rec);
+    if (!Array.isArray(out.changing) || out.changing.length !== 6) out.changing = [false, false, false, false, false, false];
+    if (!out.present || typeof out.present !== 'object' || typeof out.present.num !== 'number' || typeof out.present.name !== 'string') {
+      const p = this.hexFromLines(out.lines);
+      out.present = { num: p.num, name: p.name };
+    }
+    if (!out.future || typeof out.future !== 'object' || typeof out.future.num !== 'number' || typeof out.future.name !== 'string') {
+      const f = this.hexFromLines(out.lines.map((v, i) => (out.changing[i] ? 1 - v : v)));
+      out.future = { num: f.num, name: f.name };
+    }
+    if (!this._validLines(out.pastLines)) out.pastLines = null;
+    if (typeof out.question !== 'string') out.question = '';
+    if (typeof out.date !== 'string') out.date = '';
+    return out;
+  }
+  loadHistory() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem('kz_history') || '[]');
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((r) => this._sanitizeReading(r)).filter(Boolean);
+    } catch (e) { return []; }
+  }
   saveHistory(arr) { try { localStorage.setItem('kz_history', JSON.stringify(arr)); } catch (e) {} }
   newId() { return 'r' + Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36); }
 
