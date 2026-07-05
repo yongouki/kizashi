@@ -88,13 +88,15 @@
 
   /* --- translucent "washi on water" panels (only when the water layer is live) --- */
   body.kz-water-on .kz-card {
-    background: rgba(255, 255, 255, 0.82);
+    background: rgba(255, 255, 255, 0.70);
     backdrop-filter: blur(9px) saturate(1.03);
     -webkit-backdrop-filter: blur(9px) saturate(1.03);
   }
+  /* all viewports: the content floats on the pond; keep the wrap transparent to the canvas */
+  body.kz-water-on .kz-wrap { background: transparent; }
   @media (min-width: 480px) {
-    /* desktop: the phone frame floats on the pond; keep the outer margin transparent to the canvas */
-    body.kz-water-on .kz-wrap { background: transparent; }
+    /* desktop: the wider gutter shows plenty of water, so the card can stay a touch whiter */
+    body.kz-water-on .kz-card { background: rgba(255, 255, 255, 0.82); }
   }
   /* bottom sheets: keep them readable but let a hint of water through */
   body.kz-water-on [role="dialog"] {
@@ -214,6 +216,7 @@
     'uniform vec3 uDeep;\n' +           // deep water tint
     'uniform vec3 uShallow;\n' +        // shallow / highlight base
     'uniform vec3 uSpec;\n' +           // specular tint (indigo)
+    'uniform float uGain;\n' +          // wave-height highlight strength (stronger on coarse-pointer devices)
     'void main(){\n' +
     '  vec2 suv = vUv * uCoverScale + uCoverOffset;\n' +   // sample the sim in the same square space taps inject into
     '  float hL = TEX(uState, suv + vec2(-uTexel.x, 0.0)).r;\n' +
@@ -228,7 +231,7 @@
     '  vec3 L = normalize(vec3(-0.4, 0.75, 0.55));\n' +
     '  float spec = pow(max(dot(n, L), 0.0), 22.0);\n' +
     '  vec3 col = base + uSpec * spec * 0.55;\n' +
-    '  col += vec3(h * 1.4);\n' +
+    '  col += vec3(h * uGain);\n' +
     '  FRAG = vec4(col, 1.0);\n' +
     '}\n';
 
@@ -271,6 +274,7 @@
     // sim grid: cap 512 (spec). Phones (coarse pointer / small screen) start at 256; roomy screens 384.
     var coarse = false;
     try { coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches; } catch (_) {}
+    this._gain = coarse ? 2.0 : 1.4; // ripple highlight strength: stronger on coarse-pointer (mobile) so water reads through the lighter card
     var big = Math.min(window.innerWidth, window.innerHeight) >= 900;
     this.simSize = coarse ? 256 : (big ? 384 : 320);
     if (this.simSize > 512) this.simSize = 512;
@@ -349,7 +353,8 @@
       coverOffset: gl.getUniformLocation(this.progWater, 'uCoverOffset'),
       deep: gl.getUniformLocation(this.progWater, 'uDeep'),
       shallow: gl.getUniformLocation(this.progWater, 'uShallow'),
-      spec: gl.getUniformLocation(this.progWater, 'uSpec')
+      spec: gl.getUniformLocation(this.progWater, 'uSpec'),
+      gain: gl.getUniformLocation(this.progWater, 'uGain')
     };
 
     this.uSim = {
@@ -513,6 +518,7 @@
     gl.uniform3f(this.uWater.deep, 0.886, 0.878, 0.851);    // ~#e2e0d9 (trough / bottom)
     gl.uniform3f(this.uWater.shallow, 0.957, 0.949, 0.925); // ~#f4f2ec (crest / top)
     gl.uniform3f(this.uWater.spec, 0.184, 0.227, 0.431);    // ~#2f3a6e indigo highlight
+    gl.uniform1f(this.uWater.gain, this._gain);
     this._drawQuad();
   };
   WaterLayer.prototype._frame = function (t) {
