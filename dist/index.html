@@ -2383,7 +2383,7 @@ class App extends React.Component {
         lastThrow: { faces, value, changing, y },
         waterFlash: { seq: s.tossSeq, value: value },
       }), () => {
-        this._splashStones(faces);
+        this._splashStones(faces, value);
         var count = this.state.casts.length;
         if (count >= 6 && this.water) {
           // let the finale's three staggered splashes (0/70/140ms) rise before the 900ms damping crushes them
@@ -2399,18 +2399,20 @@ class App extends React.Component {
     }, dur + 160);
   };
 
-  // drop three interfering ripples at the three coins' on-screen centers
-  _splashStones(faces) {
+  // drop ripples only from the coins whose face matches this line's result:
+  // 陽 (value===1) → only the 表(head) stones splash, 陰 (value===0) → only 裏(tail).
+  // on a changing line all three coins share the same face, so all three splash.
+  _splashStones(faces, value) {
     if (!this.water || !this.water.ok) return;
     var btn = this._coinBtnRef;
     if (!btn) return;
     var coins = btn.querySelectorAll('.kz-coin');
     for (var i = 0; i < coins.length; i++) {
+      if (!faces || faces[i] !== (value === 1)) continue;
       var r = coins[i].getBoundingClientRect();
       var cx = r.left + r.width / 2;
       var cy = r.top + r.height / 2;
-      // a head (表/陽) hits a touch harder than a tail for a little variation
-      var strength = (faces && faces[i]) ? 1.1 : 0.85;
+      var strength = 1.1;
       // stagger the three splashes slightly so the interference reads
       (function (self, x, y, s, delay) {
         setTimeout(function () { self.water.drop(x, y, s); }, delay);
@@ -2422,6 +2424,7 @@ class App extends React.Component {
   pumpToss() { if (this._held && !this.state.tossing && this.state.casts.length < 6) this.toss(); }
   onCoinDown = (ev) => {
     if (this.state.casts.length >= 6) return;
+    if (this.water && this.water.ok) this.water.drop(ev.clientX, ev.clientY, 0.5);
     try { ev.currentTarget.setPointerCapture(ev.pointerId); } catch (_) {}
     this._held = true;
     if (!this.state.autoCasting) this.setState({ autoCasting: true });
