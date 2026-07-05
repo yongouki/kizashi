@@ -1701,7 +1701,10 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     gl.uniform1i(this.uSim.state, 0);
     gl.uniform2f(this.uSim.texel, this._texel, this._texel);
     // power-save halves the ambient shimmer and raises damping slightly
-    gl.uniform1f(this.uSim.damping, this._powerSave ? Math.min(0.999, this.damping + 0.002) : this.damping);
+    var nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    var calming = this._calmUntil && nowMs < this._calmUntil;
+    var damp = calming ? 0.90 : (this._powerSave ? Math.min(0.999, this.damping + 0.002) : this.damping);
+    gl.uniform1f(this.uSim.damping, damp);
     gl.uniform1f(this.uSim.wind, this._powerSave ? this.wind * 0.4 : this.wind);
     gl.uniform1f(this.uSim.time, (this._lastT || 0) * 0.001);
     this._drawQuad();
@@ -1740,12 +1743,27 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
   WaterLayer.prototype.drop = function (xCss, yCss, strength) {
     this.poke();
     if (!this._simReady) return;
-    var x = xCss / window.innerWidth;
-    var y = 1.0 - (yCss / window.innerHeight); // flip: sim uv y-up
+    var W = window.innerWidth, Hh = window.innerHeight;
+    // normalize to 0..1 across the larger axis so the ripple is circular; center the shorter axis
+    var m = Math.max(W, Hh);
+    var offX = (m - W) * 0.5, offY = (m - Hh) * 0.5;
+    var x = (xCss + offX) / m;
+    var y = 1.0 - ((yCss + offY) / m);       // flip to uv y-up
     this._pushDrop(x, y, strength == null ? 1 : strength);
   };
-  WaterLayer.prototype.calm = function () { /* Task 4 */ };
-  WaterLayer.prototype.setIntensity = function (/* mode */) { /* Task 4 */ };
+  WaterLayer.prototype.setIntensity = function (mode) {
+    this.mode = mode || 'ask';
+    // wind = ambient shimmer amplitude; damping = wave persistence
+    if (mode === 'cast')        { this.wind = 1.0; this.damping = 0.997; }
+    else if (mode === 'result') { this.wind = 0.05; this.damping = 0.985; }  // near-frozen for reading
+    else if (mode === 'idle')   { this.wind = 0.25; this.damping = 0.992; }
+    else                        { this.wind = 0.45; this.damping = 0.995; }  // ask/history/reference/detail/about
+    this.poke();
+  };
+  WaterLayer.prototype.calm = function () {
+    // temporarily crush the surface toward flat; sim's damping does the rest over ~1s
+    this._calmUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 900;
+  };
   WaterLayer.prototype.poke = function () { this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now()); this._powerSave = false; };
   WaterLayer.prototype.destroy = function () {
     this._stop();
@@ -1758,9 +1776,6 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
 
   try { window.__kzWater = new WaterLayer(ctx); }
   catch (_) { window.__kzWater = makeNoop(); }
-
-  // TEMP (removed in Task 4): allow manual drops while tap wiring is not yet in place
-  if (window.__kzWater && window.__kzWater.ok) window.__kzWaterDrop = function (x, y, s) { window.__kzWater.drop(x, y, s); };
 })();
 
 const e = React.createElement;
@@ -2005,6 +2020,8 @@ class App extends React.Component {
 
   componentDidMount() {
     this.water = window.__kzWater || { ok: false, drop(){}, calm(){}, setIntensity(){}, poke(){}, destroy(){} };
+    document.addEventListener('pointerdown', this._waterPointer, { passive: true });
+    this._syncWaterIntensity();
     window.addEventListener('popstate', this._onPopState);
     // migrate a legacy single kz_prev into the history array
     try {
@@ -2036,6 +2053,7 @@ class App extends React.Component {
   }
 
   componentDidUpdate(prevProps, prevState) {
+    this._syncWaterIntensity();
     this.saveSession();
     const wasSheet = prevState.menuOpen || prevState.glossTerm || prevState.aiConsentOpen || prevState.shareOpen || prevState.confirmClearOpen;
     const isSheet = this.state.menuOpen || this.state.glossTerm || this.state.aiConsentOpen || this.state.shareOpen || this.state.confirmClearOpen;
@@ -2053,8 +2071,32 @@ class App extends React.Component {
 
   componentWillUnmount() {
     window.removeEventListener('popstate', this._onPopState);
+    document.removeEventListener('pointerdown', this._waterPointer);
     if (this._aiAbort) this._aiAbort.abort();
     if (this.water && this.water.destroy) this.water.destroy();
+  }
+
+  // raise a ripple on taps that are NOT on interactive UI (buttons/inputs/links/role=button)
+  _waterPointer = (ev) => {
+    if (!this.water || !this.water.ok) return;
+    if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+    var t = ev.target;
+    if (t && t.closest && t.closest('button, a, input, textarea, select, [role="button"], [tabindex], .kz-coin')) {
+      this.water.poke();
+      return; // let the control handle it; no ripple over UI chrome
+    }
+    this.water.drop(ev.clientX, ev.clientY, 0.7);
+  };
+
+  _screenToWaterMode(screen) {
+    if (screen === 'cast') return 'cast';
+    if (screen === 'result') return 'result';
+    return 'ask'; // ask/about/history/reference/detail → quiet shimmer
+  }
+  _syncWaterIntensity() {
+    if (!this.water) return;
+    var mode = this._screenToWaterMode(this.state.screen);
+    if (this._waterMode !== mode) { this._waterMode = mode; this.water.setIntensity(mode); }
   }
 
   // ---- actions ----
