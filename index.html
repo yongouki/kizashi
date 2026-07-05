@@ -82,6 +82,11 @@
   .kz-wrap { position: relative; z-index: 1; }
   /* fallback / reduced-motion: no canvas, unchanged flat look */
   body.kz-water-off #kz-water { display: none; }
+  @keyframes kz-yao-rise {
+    0%   { opacity: 0; transform: translate(-50%, 0) scaleX(.4); filter: blur(1px); }
+    30%  { opacity: .95; transform: translate(-50%, -8px) scaleX(1); filter: blur(0); }
+    100% { opacity: 0; transform: translate(-50%, -120px) scaleX(.9); filter: blur(.5px); }
+  }
 </style>
 </head>
 <body>
@@ -520,6 +525,7 @@ class App extends React.Component {
     toast: '',
     autoCasting: false,
     lastThrow: null,
+    waterFlash: null,
     glossTerm: null,
     aiConsentOpen: false,
     shareOpen: false,
@@ -843,7 +849,15 @@ class App extends React.Component {
     this.setState({ rot: newRot, rotZ: newRotZ, tossing: true, everTossed: true, tossSeq: this.state.tossSeq + 1, lastThrow: null });
     const dur = style === 'lift' ? 1100 : (style === 'ripple' ? 760 : 900);
     setTimeout(() => {
-      this.setState((s) => ({ casts: s.casts.concat([{ value, changing }]), tossing: false, lastThrow: { faces, value, changing, y } }), () => {
+      this.setState((s) => ({
+        casts: s.casts.concat([{ value, changing }]),
+        tossing: false,
+        lastThrow: { faces, value, changing, y },
+        waterFlash: { seq: s.tossSeq, value: value },
+      }), () => {
+        this._splashStones(faces);
+        var count = this.state.casts.length;
+        if (count >= 6 && this.water) this.water.calm();      // sixth line: still the pond
         // press-and-hold: while held, keep tossing until 6; else stop
         if (this._held && this.state.casts.length < 6) {
           this._autoT = setTimeout(() => this.pumpToss(), 90);
@@ -853,6 +867,25 @@ class App extends React.Component {
       });
     }, dur + 160);
   };
+
+  // drop three interfering ripples at the three coins' on-screen centers
+  _splashStones(faces) {
+    if (!this.water || !this.water.ok) return;
+    var btn = this._coinBtnRef;
+    if (!btn) return;
+    var coins = btn.querySelectorAll('.kz-coin');
+    for (var i = 0; i < coins.length; i++) {
+      var r = coins[i].getBoundingClientRect();
+      var cx = r.left + r.width / 2;
+      var cy = r.top + r.height / 2;
+      // a head (表/陽) hits a touch harder than a tail for a little variation
+      var strength = (faces && faces[i]) ? 1.1 : 0.85;
+      // stagger the three splashes slightly so the interference reads
+      (function (self, x, y, s, delay) {
+        setTimeout(function () { self.water.drop(x, y, s); }, delay);
+      })(this, cx, cy, strength, i * 70);
+    }
+  }
 
   // ---- press and hold: keep throwing the stones while held, stop on release ----
   pumpToss() { if (this._held && !this.state.tossing && this.state.casts.length < 6) this.toss(); }
@@ -1595,6 +1628,7 @@ class App extends React.Component {
       hasQuestion: s.screen === 'result' && s.question.trim().length > 0,
       coins,
       ripple,
+      waterFlash: s.waterFlash,
       buildingHex,
       throwReadout,
       counter: s.casts.length >= 6 ? '六本そろいました' : `あと ${6 - s.casts.length} 回`,
@@ -1697,10 +1731,25 @@ class App extends React.Component {
       e('p', { style: { fontSize: '13.5px', lineHeight: 1.9, color: '#6f6a62', margin: '0 0 26px', textAlign: 'center', maxWidth: '290px' } }, '問いを想いながら、石にふれてください。タップで一度、長押しで続けて投げます。'),
       e('div', { style: { minHeight: '188px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', marginBottom: '30px' } }, out.buildingHex),
       e('button', { type: 'button', 'aria-label': '石を投げる（押している間つづけて立てます）',
+        ref: (n) => { this._coinBtnRef = n; },
         onPointerDown: this.onCoinDown, onPointerUp: this.releaseCoin, onPointerCancel: this.releaseCoin, onLostPointerCapture: this.releaseCoin, onKeyDown: this.onCoinKey,
         style: { position: 'relative', display: 'flex', gap: '18px', alignItems: 'center', justifyContent: 'center', padding: '18px 8px', cursor: 'pointer', perspective: '700px', touchAction: 'none', border: 'none', background: 'none', font: 'inherit', outlineOffset: '6px', WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' } },
         out.coins,
-        out.ripple
+        out.ripple,
+        out.waterFlash ? e('div', {
+          key: 'yf-' + out.waterFlash.seq,
+          'aria-hidden': 'true',
+          style: {
+            position: 'absolute', left: '50%', top: '46%', pointerEvents: 'none',
+            width: out.waterFlash.value === 1 ? '120px' : '120px',
+            height: out.waterFlash.value === 1 ? '3px' : '3px',
+            borderRadius: '3px',
+            background: out.waterFlash.value === 1
+              ? 'linear-gradient(90deg, rgba(47,58,110,0) 0%, rgba(47,58,110,.9) 50%, rgba(47,58,110,0) 100%)'
+              : 'linear-gradient(90deg, rgba(47,58,110,0) 0%, rgba(47,58,110,.9) 35%, rgba(47,58,110,0) 50%, rgba(47,58,110,.9) 65%, rgba(47,58,110,0) 100%)',
+            animation: 'kz-yao-rise 1s cubic-bezier(.2,.7,.2,1) both',
+          }
+        }) : null
       ),
       e('div', { style: { height: '26px', marginTop: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' } }, out.throwReadout),
       e('div', { style: { height: '22px', marginTop: '2px' } },
