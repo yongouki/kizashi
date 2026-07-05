@@ -80,8 +80,6 @@
   /* when water is active, let the page background show the canvas rather than a flat fill */
   body.kz-water-on { background: #e6e3dd; }
   .kz-wrap { position: relative; z-index: 1; }
-  /* fallback / reduced-motion: no canvas, unchanged flat look */
-  body.kz-water-off #kz-water { display: none; }
   @keyframes kz-yao-rise {
     0%   { opacity: 0; transform: translate(-50%, 0) scaleX(.4); filter: blur(1px); }
     30%  { opacity: .95; transform: translate(-50%, -8px) scaleX(1); filter: blur(0); }
@@ -1508,18 +1506,20 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     'IN vec2 vUv;\n' +
     'uniform sampler2D uState;\n' +
     'uniform vec2 uTexel;\n' +          // 1/simSize
-    'uniform vec2 uAspect;\n' +         // (canvasW/canvasH) correction for the gradient
+    'uniform vec2 uCoverScale;\n' +     // vUv -> centered-square sim UV (matches drop() mapping)
+    'uniform vec2 uCoverOffset;\n' +    // (see drop(): normalized by max(W,H), shorter axis centered)
     'uniform vec3 uDeep;\n' +           // deep water tint
     'uniform vec3 uShallow;\n' +        // shallow / highlight base
     'uniform vec3 uSpec;\n' +           // specular tint (indigo)
     'void main(){\n' +
-    '  float hL = TEX(uState, vUv + vec2(-uTexel.x, 0.0)).r;\n' +
-    '  float hR = TEX(uState, vUv + vec2( uTexel.x, 0.0)).r;\n' +
-    '  float hU = TEX(uState, vUv + vec2(0.0, -uTexel.y)).r;\n' +
-    '  float hD = TEX(uState, vUv + vec2(0.0,  uTexel.y)).r;\n' +
+    '  vec2 suv = vUv * uCoverScale + uCoverOffset;\n' +   // sample the sim in the same square space taps inject into
+    '  float hL = TEX(uState, suv + vec2(-uTexel.x, 0.0)).r;\n' +
+    '  float hR = TEX(uState, suv + vec2( uTexel.x, 0.0)).r;\n' +
+    '  float hU = TEX(uState, suv + vec2(0.0, -uTexel.y)).r;\n' +
+    '  float hD = TEX(uState, suv + vec2(0.0,  uTexel.y)).r;\n' +
     '  vec3 n = normalize(vec3(hL - hR, hU - hD, 0.10));\n' +   // z controls apparent slope scale
-    '  float h = TEX(uState, vUv).r;\n' +
-    '  vec2 ruv = vUv + n.xy * 0.9;\n' +
+    '  float h = TEX(uState, suv).r;\n' +
+    '  vec2 ruv = vUv + n.xy * 0.9;\n' +   // refraction gradient stays anchored to screen space so the tint is unchanged
     '  float grad = clamp(ruv.y, 0.0, 1.0);\n' +
     '  vec3 base = mix(uDeep, uShallow, grad);\n' +
     '  vec3 L = normalize(vec3(-0.4, 0.75, 0.55));\n' +
@@ -1560,6 +1560,7 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     this.ok = true;
 
     this.canvas.id = 'kz-water';
+    this.canvas.setAttribute('aria-hidden', 'true');
     document.body.insertBefore(this.canvas, document.body.firstChild);
     document.body.classList.add('kz-water-on');
 
@@ -1577,9 +1578,19 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     this._lastT = 0;
     this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this._powerSave = false;
+    this._activeUntil = 0;            // full-rate window: run 60fps while now < this, throttle after (power-save)
+    this._lastRenderT = 0;            // last frame actually rendered (for power-save throttle)
     this._dropletT = 0;               // timer id for the sparse random-droplet scheduler
 
-    this._buildGL();                 // Task 2 fills this (buffers/programs/textures). Stub here.
+    try {
+      this._buildGL();               // buffers/programs/textures; may throw if half-float RTT fails
+    } catch (err) {
+      // WebGL exists but the sim cannot run: strip the DOM/class state we already added
+      // so the app keeps its opaque, non-translucent look instead of showing a dead canvas.
+      try { if (this.canvas && this.canvas.parentNode) this.canvas.parentNode.removeChild(this.canvas); } catch (_) {}
+      try { document.body.classList.remove('kz-water-on'); } catch (_) {}
+      throw err;                      // outer catch installs makeNoop()
+    }
     this._resize();
     this._onResize = this._resize.bind(this);
     window.addEventListener('resize', this._onResize);
@@ -1631,7 +1642,8 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     this.uWater = {
       state: gl.getUniformLocation(this.progWater, 'uState'),
       texel: gl.getUniformLocation(this.progWater, 'uTexel'),
-      aspect: gl.getUniformLocation(this.progWater, 'uAspect'),
+      coverScale: gl.getUniformLocation(this.progWater, 'uCoverScale'),
+      coverOffset: gl.getUniformLocation(this.progWater, 'uCoverOffset'),
       deep: gl.getUniformLocation(this.progWater, 'uDeep'),
       shallow: gl.getUniformLocation(this.progWater, 'uShallow'),
       spec: gl.getUniformLocation(this.progWater, 'uSpec')
@@ -1710,6 +1722,9 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
       this.heightTex = newTex; this.simFBO = newFBO;
       this.cur = 0;
     } catch (_) {
+      // free the resources staged so far this call before tearing everything down
+      if (newFBO) { for (var k = 0; k < newFBO.length; k++) { try { gl.deleteFramebuffer(newFBO[k]); } catch (_e) {} } }
+      if (newTex) { for (var l = 0; l < newTex.length; l++) { try { gl.deleteTexture(newTex[l]); } catch (_e) {} } }
       this._simReady = false;
       this.destroy();
     }
@@ -1785,7 +1800,12 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     gl.bindTexture(gl.TEXTURE_2D, this.heightTex[this.cur]);
     gl.uniform1i(this.uWater.state, 0);
     gl.uniform2f(this.uWater.texel, this._texel, this._texel);
-    gl.uniform2f(this.uWater.aspect, this.canvas.width / this.canvas.height, 1.0);
+    // vUv (screen 0..1) -> centered-square sim UV, the exact inverse of drop()'s mapping,
+    // so a ripple injected at a CSS point renders at that same screen point on non-square canvases.
+    var W = window.innerWidth, Hh = window.innerHeight, m = Math.max(W, Hh);
+    var offX = (m - W) * 0.5, offY = (m - Hh) * 0.5;
+    gl.uniform2f(this.uWater.coverScale, W / m, Hh / m);
+    gl.uniform2f(this.uWater.coverOffset, offX / m, 1.0 - (offY + Hh) / m);
     // palette: washi-beige base graded from a slightly deeper tone up to a paler top
     gl.uniform3f(this.uWater.deep, 0.886, 0.878, 0.851);    // ~#e2e0d9 (trough / bottom)
     gl.uniform3f(this.uWater.shallow, 0.957, 0.949, 0.925); // ~#f4f2ec (crest / top)
@@ -1799,6 +1819,12 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     // power-save: after 6s of no interaction, ease into idle shimmer
     var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this._powerSave = (now - this._idleSince) > 6000;
+    // once quiet AND no pending drops AND past the last disturbance's decay window, throttle the
+    // whole sim+render loop to ~10fps to cut GPU/CPU work; a drop/poke lifts _activeUntil back to 60fps.
+    if (this._powerSave && !this._pending.length && now >= this._activeUntil) {
+      if (now - this._lastRenderT < 100) return;   // skip this frame's sim+render
+    }
+    this._lastRenderT = now;
     // watchdog: if frames run long for a sustained stretch, drop sim resolution one notch (once)
     if (!this._downgraded) {
       if (dt > 34) { this._slowFrames = (this._slowFrames || 0) + 1; } else { this._slowFrames = 0; }
@@ -1837,18 +1863,24 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
     // temporarily crush the surface toward flat; sim's damping does the rest over ~1s
     this._calmUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 900;
   };
-  WaterLayer.prototype.poke = function () { this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now()); this._powerSave = false; };
+  WaterLayer.prototype.poke = function () {
+    var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this._idleSince = now; this._powerSave = false;
+    this._activeUntil = now + 4000;   // keep 60fps for ~4s so this disturbance decays smoothly before throttling
+  };
 
   // ---- sparse random droplets: occasional small ripples on a quiet pond ----
   WaterLayer.prototype._scheduleDroplet = function () {
     var self = this;
     var base = 4000 + Math.random() * 5000;              // ~4-9s
     if (this.mode === 'result') base *= 2 + Math.random(); // much rarer while reading a result
+    if (this._powerSave) base *= 2.5;                     // quiet-but-alive: sparser while power-saving
     this._dropletT = setTimeout(function () { self._fireDroplet(); }, base);
   };
   WaterLayer.prototype._fireDroplet = function () {
     try {
-      var skip = document.hidden || this._powerSave || this.mode === 'idle';
+      // keep dripping during power-save (quiet but alive) — each drop pokes _activeUntil back to 60fps
+      var skip = document.hidden || this.mode === 'idle';
       if (!skip && this._simReady) {
         var marginX = window.innerWidth * 0.08, marginY = window.innerHeight * 0.08;
         var x = marginX + Math.random() * (window.innerWidth - marginX * 2);
@@ -1861,8 +1893,20 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
   };
 
   WaterLayer.prototype.destroy = function () {
+    this.ok = false; this._simReady = false;   // first, so nothing (and no stale API) treats us as live
     this._stop();
     if (this._dropletT) { clearTimeout(this._dropletT); this._dropletT = 0; }
+    var gl = this.gl;
+    if (gl) {
+      try { if (this.quad) gl.deleteBuffer(this.quad); } catch (_) {}
+      try { if (this.progSim) gl.deleteProgram(this.progSim); } catch (_) {}
+      try { if (this.progDrop) gl.deleteProgram(this.progDrop); } catch (_) {}
+      try { if (this.progWater) gl.deleteProgram(this.progWater); } catch (_) {}
+      if (this.heightTex) { for (var i = 0; i < this.heightTex.length; i++) { try { gl.deleteTexture(this.heightTex[i]); } catch (_) {} } }
+      if (this.simFBO) { for (var j = 0; j < this.simFBO.length; j++) { try { gl.deleteFramebuffer(this.simFBO[j]); } catch (_) {} } }
+    }
+    this.quad = null; this.progSim = null; this.progDrop = null; this.progWater = null;
+    this.heightTex = null; this.simFBO = null;
     try { window.removeEventListener('resize', this._onResize); } catch (_) {}
     try { document.removeEventListener('visibilitychange', this._onVis); } catch (_) {}
     try { document.body.classList.remove('kz-water-on'); } catch (_) {}
@@ -2245,7 +2289,10 @@ class App extends React.Component {
       }), () => {
         this._splashStones(faces);
         var count = this.state.casts.length;
-        if (count >= 6 && this.water) this.water.calm();      // sixth line: still the pond
+        if (count >= 6 && this.water) {
+          // let the finale's three staggered splashes (0/70/140ms) rise before the 900ms damping crushes them
+          setTimeout(() => { if (this.water) this.water.calm(); }, 700);   // sixth line: still the pond
+        }
         // press-and-hold: while held, keep tossing until 6; else stop
         if (this._held && this.state.casts.length < 6) {
           this._autoT = setTimeout(() => this.pumpToss(), 90);
@@ -3129,8 +3176,8 @@ class App extends React.Component {
           'aria-hidden': 'true',
           style: {
             position: 'absolute', left: '50%', top: '46%', pointerEvents: 'none',
-            width: out.waterFlash.value === 1 ? '120px' : '120px',
-            height: out.waterFlash.value === 1 ? '3px' : '3px',
+            width: '120px',
+            height: '3px',
             borderRadius: '3px',
             background: out.waterFlash.value === 1
               ? 'linear-gradient(90deg, rgba(47,58,110,0) 0%, rgba(47,58,110,.9) 50%, rgba(47,58,110,0) 100%)'
