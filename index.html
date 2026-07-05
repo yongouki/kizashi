@@ -87,6 +87,28 @@
     30%  { opacity: .95; transform: translate(-50%, -8px) scaleX(1); filter: blur(0); }
     100% { opacity: 0; transform: translate(-50%, -120px) scaleX(.9); filter: blur(.5px); }
   }
+
+  /* --- translucent "washi on water" panels (only when the water layer is live) --- */
+  body.kz-water-on .kz-card {
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(9px) saturate(1.03);
+    -webkit-backdrop-filter: blur(9px) saturate(1.03);
+  }
+  @media (min-width: 480px) {
+    /* desktop: the phone frame floats on the pond; keep the outer margin transparent to the canvas */
+    body.kz-water-on .kz-wrap { background: transparent; }
+  }
+  /* bottom sheets: keep them readable but let a hint of water through */
+  body.kz-water-on [role="dialog"] {
+    background: rgba(244, 242, 236, 0.92) !important;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+  }
+  /* when backdrop-filter is unsupported, fall back to a more opaque tint so text stays legible */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    body.kz-water-on .kz-card { background: rgba(255, 255, 255, 0.93); }
+    body.kz-water-on [role="dialog"] { background: rgba(244, 242, 236, 0.97) !important; }
+  }
 </style>
 </head>
 <body>
