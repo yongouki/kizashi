@@ -178,8 +178,6 @@
     'uniform sampler2D uState;\n' +
     'uniform vec2 uTexel;\n' +          // 1/simSize
     'uniform float uDamping;\n' +
-    'uniform float uWind;\n' +          // ambient shimmer amplitude
-    'uniform float uTime;\n' +
     'void main(){\n' +
     '  vec2 s = TEX(uState, vUv).rg;\n' +
     '  float h = s.r; float hPrev = s.g;\n' +
@@ -190,8 +188,6 @@
     '  float lap = (l + r + u + d) - 4.0 * h;\n' +
     '  float next = (2.0 * h - hPrev) + 0.28 * lap;\n' +   // c^2 dt^2 = 0.28 (stable < 0.5)
     '  next *= uDamping;\n' +
-    // faint ambient shimmer so the surface is never perfectly dead
-    '  next += uWind * 0.0009 * sin((vUv.x*18.0 + vUv.y*22.0) + uTime*1.7);\n' +
     '  FRAG = vec4(next, h, 0.0, 1.0);\n' +
     '}\n';
 
@@ -277,7 +273,6 @@
     var big = Math.min(window.innerWidth, window.innerHeight) >= 900;
     this.simSize = coarse ? 256 : (big ? 384 : 320);
     if (this.simSize > 512) this.simSize = 512;
-    this.wind = 0.0;                 // ambient liveliness (set by setIntensity)
     this.damping = 0.996;            // wave persistence (set by setIntensity)
     this.mode = 'idle';
     this._pending = [];              // queued drops: {x,y,strength} in sim-space 0..1
@@ -285,6 +280,7 @@
     this._lastT = 0;
     this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this._powerSave = false;
+    this._dropletT = 0;               // timer id for the sparse random-droplet scheduler
 
     this._buildGL();                 // Task 2 fills this (buffers/programs/textures). Stub here.
     this._resize();
@@ -293,6 +289,7 @@
     this._onVis = this._visibility.bind(this);
     document.addEventListener('visibilitychange', this._onVis);
     this._start();
+    this._scheduleDroplet();
   }
 
   // ---- lifecycle ----
@@ -346,9 +343,7 @@
     this.uSim = {
       state: gl.getUniformLocation(this.progSim, 'uState'),
       texel: gl.getUniformLocation(this.progSim, 'uTexel'),
-      damping: gl.getUniformLocation(this.progSim, 'uDamping'),
-      wind: gl.getUniformLocation(this.progSim, 'uWind'),
-      time: gl.getUniformLocation(this.progSim, 'uTime')
+      damping: gl.getUniformLocation(this.progSim, 'uDamping')
     };
     this.uDrop = {
       state: gl.getUniformLocation(this.progDrop, 'uState'),
@@ -382,7 +377,7 @@
     this.cur = 0;   // index of freshest state
     this._simReady = true;
     this._texel = 1.0 / N;
-    this.wind = 1.0; this.damping = 0.996;
+    this.damping = 0.996;
   };
 
   WaterLayer.prototype._rebuildSim = function (size) {
@@ -473,13 +468,11 @@
     gl.bindTexture(gl.TEXTURE_2D, this.heightTex[src]);
     gl.uniform1i(this.uSim.state, 0);
     gl.uniform2f(this.uSim.texel, this._texel, this._texel);
-    // power-save halves the ambient shimmer and raises damping slightly
+    // power-save raises damping slightly so ripples settle a touch faster
     var nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     var calming = this._calmUntil && nowMs < this._calmUntil;
     var damp = calming ? 0.90 : (this._powerSave ? Math.min(0.999, this.damping + 0.002) : this.damping);
     gl.uniform1f(this.uSim.damping, damp);
-    gl.uniform1f(this.uSim.wind, this._powerSave ? this.wind * 0.4 : this.wind);
-    gl.uniform1f(this.uSim.time, (this._lastT || 0) * 0.001);
     this._drawQuad();
     this.cur = dst;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -536,11 +529,11 @@
   };
   WaterLayer.prototype.setIntensity = function (mode) {
     this.mode = mode || 'ask';
-    // wind = ambient shimmer amplitude; damping = wave persistence
-    if (mode === 'cast')        { this.wind = 1.0; this.damping = 0.997; }
-    else if (mode === 'result') { this.wind = 0.05; this.damping = 0.985; }  // near-frozen for reading
-    else if (mode === 'idle')   { this.wind = 0.25; this.damping = 0.992; }
-    else                        { this.wind = 0.45; this.damping = 0.995; }  // ask/history/reference/detail/about
+    // damping = wave persistence after a disturbance (tap/stone/droplet)
+    if (mode === 'cast')        { this.damping = 0.997; }
+    else if (mode === 'result') { this.damping = 0.985; }  // near-frozen for reading
+    else if (mode === 'idle')   { this.damping = 0.992; }
+    else                        { this.damping = 0.995; }  // ask/history/reference/detail/about
     this.poke();
   };
   WaterLayer.prototype.calm = function () {
@@ -548,8 +541,31 @@
     this._calmUntil = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 900;
   };
   WaterLayer.prototype.poke = function () { this._idleSince = (typeof performance !== 'undefined' ? performance.now() : Date.now()); this._powerSave = false; };
+
+  // ---- sparse random droplets: occasional small ripples on a quiet pond ----
+  WaterLayer.prototype._scheduleDroplet = function () {
+    var self = this;
+    var base = 4000 + Math.random() * 5000;              // ~4-9s
+    if (this.mode === 'result') base *= 2 + Math.random(); // much rarer while reading a result
+    this._dropletT = setTimeout(function () { self._fireDroplet(); }, base);
+  };
+  WaterLayer.prototype._fireDroplet = function () {
+    try {
+      var skip = document.hidden || this._powerSave || this.mode === 'idle';
+      if (!skip && this._simReady) {
+        var marginX = window.innerWidth * 0.08, marginY = window.innerHeight * 0.08;
+        var x = marginX + Math.random() * (window.innerWidth - marginX * 2);
+        var y = marginY + Math.random() * (window.innerHeight - marginY * 2);
+        var strength = 0.15 + Math.random() * 0.15;        // ~0.15-0.3
+        this.drop(x, y, strength);
+      }
+    } catch (_) {}
+    this._scheduleDroplet();
+  };
+
   WaterLayer.prototype.destroy = function () {
     this._stop();
+    if (this._dropletT) { clearTimeout(this._dropletT); this._dropletT = 0; }
     try { window.removeEventListener('resize', this._onResize); } catch (_) {}
     try { document.removeEventListener('visibilitychange', this._onVis); } catch (_) {}
     try { document.body.classList.remove('kz-water-on'); } catch (_) {}
