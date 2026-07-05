@@ -271,7 +271,12 @@
     document.body.classList.add('kz-water-on');
 
     this.dpr = Math.min(1.5, window.devicePixelRatio || 1);
-    this.simSize = 256;              // ping-pong grid resolution (raised toward 512 cap after profiling)
+    // sim grid: cap 512 (spec). Phones (coarse pointer / small screen) start at 256; roomy screens 384.
+    var coarse = false;
+    try { coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches; } catch (_) {}
+    var big = Math.min(window.innerWidth, window.innerHeight) >= 900;
+    this.simSize = coarse ? 256 : (big ? 384 : 320);
+    if (this.simSize > 512) this.simSize = 512;
     this.wind = 0.0;                 // ambient liveliness (set by setIntensity)
     this.damping = 0.996;            // wave persistence (set by setIntensity)
     this.mode = 'idle';
@@ -380,6 +385,35 @@
     this.wind = 1.0; this.damping = 0.996;
   };
 
+  WaterLayer.prototype._rebuildSim = function (size) {
+    if (!this._simReady || size === this.simSize || size < 64) return;
+    var gl = this.gl;
+    // delete old textures + FBOs
+    for (var i = 0; i < this.heightTex.length; i++) {
+      try { gl.deleteFramebuffer(this.simFBO[i]); } catch (_) {}
+      try { gl.deleteTexture(this.heightTex[i]); } catch (_) {}
+    }
+    this.simSize = size; this._texel = 1.0 / size;
+    var filter = this.linearOK ? gl.LINEAR : gl.NEAREST;
+    this.heightTex = []; this.simFBO = [];
+    for (var j = 0; j < 3; j++) {
+      var tex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      var internal = this.isGL2 ? gl.RGBA16F : gl.RGBA;
+      gl.texImage2D(gl.TEXTURE_2D, 0, internal, size, size, 0, gl.RGBA, this.halfType, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      var fbo = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+      this.heightTex.push(tex); this.simFBO.push(fbo);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    this.cur = 0;
+  };
+
   // bind the quad to attrib 0 and draw the full-screen triangle strip
   WaterLayer.prototype._drawQuad = function () {
     var gl = this.gl;
@@ -460,11 +494,21 @@
     this._drawQuad();
   };
   WaterLayer.prototype._frame = function (t) {
-    if (!this._lastT) this._lastT = t;
+    if (!this._lastT) { this._lastT = t; this._simStep(); this._render(); return; }
+    var dt = t - this._lastT;
     this._lastT = t;
     // power-save: after 6s of no interaction, ease into idle shimmer
     var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this._powerSave = (now - this._idleSince) > 6000;
+    // watchdog: if frames run long for a sustained stretch, drop sim resolution one notch (once)
+    if (!this._downgraded) {
+      if (dt > 34) { this._slowFrames = (this._slowFrames || 0) + 1; } else { this._slowFrames = 0; }
+      if (this._slowFrames > 90) {           // ~1.5s of >34ms frames
+        var next = this.simSize >= 384 ? 256 : (this.simSize >= 320 ? 256 : 192);
+        if (next < this.simSize) { this._rebuildSim(next); this._downgraded = true; }
+        this._slowFrames = 0;
+      }
+    }
     this._simStep();
     this._render();
   };
