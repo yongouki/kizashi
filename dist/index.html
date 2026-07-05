@@ -1691,24 +1691,33 @@ const GLOSSARY_KEYS = Object.keys(GLOSSARY).sort((a, b) => b.length - a.length);
       try { gl.deleteTexture(this.heightTex[i]); } catch (_) {}
     }
     this.simSize = size; this._texel = 1.0 / size;
-    var filter = this.linearOK ? gl.LINEAR : gl.NEAREST;
-    this.heightTex = []; this.simFBO = [];
-    for (var j = 0; j < 3; j++) {
-      var tex = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, tex);
-      var internal = this.isGL2 ? gl.RGBA16F : gl.RGBA;
-      gl.texImage2D(gl.TEXTURE_2D, 0, internal, size, size, 0, gl.RGBA, this.halfType, null);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      var fbo = gl.createFramebuffer();
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-      this.heightTex.push(tex); this.simFBO.push(fbo);
+    try {
+      var filter = this.linearOK ? gl.LINEAR : gl.NEAREST;
+      var newTex = []; var newFBO = []; var complete = true;
+      for (var j = 0; j < 3; j++) {
+        var tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        var internal = this.isGL2 ? gl.RGBA16F : gl.RGBA;
+        gl.texImage2D(gl.TEXTURE_2D, 0, internal, size, size, 0, gl.RGBA, this.halfType, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        var fbo = gl.createFramebuffer();
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+        gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+        // half-float RTT unsupported/context lost → bail out and degrade safely below
+        if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) complete = false;
+        newTex.push(tex); newFBO.push(fbo);
+      }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      if (!complete) throw new Error('water: half-float FBO incomplete on rebuild');
+      this.heightTex = newTex; this.simFBO = newFBO;
+      this.cur = 0;
+    } catch (_) {
+      this._simReady = false;
+      this.destroy();
     }
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    this.cur = 0;
   };
 
   // bind the quad to attrib 0 and draw the full-screen triangle strip
